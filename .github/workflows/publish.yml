@@ -2,9 +2,15 @@ name: Publish Package to npmjs
 on:
   release:
     types: [published]
+
+env:
+  NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 jobs:
   build:
     runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      id-token: write
     strategy:
       matrix:
         node-version: [ 20 ]
@@ -21,7 +27,8 @@ jobs:
           cache: 'pnpm'
       - name: Install dependencies
         run: pnpm install
-      - run: pnpm ci
+      - name: configure registry
+        run: pnpm config set '//registry.npmjs.org/:_authToken' "${NPM_TOKEN}"
       - run: pnpm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
