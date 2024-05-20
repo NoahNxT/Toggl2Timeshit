@@ -52,27 +52,36 @@ async function fetchTimeEntries() {
   return await timeEntriesResponse.json();
 }
 
-async function fetchWorkspaceIds() {
-  const uniqueWorkspaceIds = new Set();
+async function fetchWorkspaces() {
+  const workspacesUrl = `https://api.track.toggl.com/api/v9/workspaces`;
 
-  timeEntriesJson.forEach((entry) => {
-    uniqueWorkspaceIds.add(entry.wid);
+  const workspacesResponse = await fetch(workspacesUrl, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Basic ${base64Credentials}`,
+    },
   });
 
-  return Array.from(uniqueWorkspaceIds);
+  if (!workspacesResponse.ok) {
+    console.error("Failed to fetch workspaces from Toggl API");
+    return [];
+  }
+
+  return await workspacesResponse.json();
 }
 
 async function selectWorkspaceId() {
-  const workspaceIds = await fetchWorkspaceIds();
+  const workspaces = await fetchWorkspaces();
 
-  if (workspaceIds.length === 0) {
-    console.error("No workspace IDs found");
+  if (workspaces.length === 0) {
+    console.error("No workspaces found");
     return null;
   }
 
-  console.log("Select a workspace ID:");
-  workspaceIds.forEach((id, index) => {
-    console.log(`${index + 1}. ${id}`);
+  console.log(chalk.green("Select a workspace ID:"));
+  workspaces.forEach((workspace, index) => {
+    console.log(chalk.blueBright(`${index + 1}. ${workspace.name}`));
   });
 
   const userInput = prompt(
@@ -83,13 +92,13 @@ async function selectWorkspaceId() {
   if (
     isNaN(selectedIndex) ||
     selectedIndex < 1 ||
-    selectedIndex > workspaceIds.length
+    selectedIndex > workspaces.length
   ) {
     console.error("Invalid selection");
     return null;
   }
 
-  return workspaceIds[selectedIndex - 1];
+  return workspaces[selectedIndex - 1].id;
 }
 
 export async function list() {
