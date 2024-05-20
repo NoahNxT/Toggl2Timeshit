@@ -7,7 +7,7 @@
     "start": "node index.js",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "ci": "npm run lint && npm run format",
   },
   "keywords": [
     "MIT"
