@@ -7,7 +7,7 @@
     "start": "node index.js",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "ci": "npm run lint && npm run format",
+    "ci": "npm run lint && npm run format"
   },
   "keywords": [
     "MIT"
