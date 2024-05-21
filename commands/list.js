@@ -129,11 +129,17 @@ export async function list() {
     if (!acc[projectId]) {
       acc[projectId] = {
         name: null,
-        entries: [],
+        entries: {},
         totalHours: 0,
       };
     }
-    acc[projectId].entries.push(entry);
+    if (!acc[projectId].entries[entry.description]) {
+      acc[projectId].entries[entry.description] = {
+        description: entry.description,
+        totalDuration: 0,
+      };
+    }
+    acc[projectId].entries[entry.description].totalDuration += entry.duration;
     acc[projectId].totalHours += entry.duration / 3600;
     return acc;
   }, {});
@@ -159,8 +165,8 @@ export async function list() {
     console.log();
 
     console.log(chalk.cyan("Tickets:"));
-    projectData.entries.forEach((entry) => {
-      const durationHours = entry.duration / 3600;
+    Object.values(projectData.entries).forEach((entry) => {
+      const durationHours = entry.totalDuration / 3600;
       console.log(`• ${entry.description} (${durationHours.toFixed(2)})`);
     });
 
