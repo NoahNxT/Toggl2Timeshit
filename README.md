@@ -1,3 +1,8 @@
+![GitHub Release Date](https://img.shields.io/github/release-date/NoahNxT/Toggl2Timeshit)
+![GitHub code size in bytes](https://img.shields.io/github/languages/code-size/NoahNxT/Toggl2Timeshit)
+![NPM Version](https://img.shields.io/npm/v/toggl2timeshit)
+![X (formerly Twitter) Follow](https://img.shields.io/twitter/follow/does_it_code)
+
 # Toggl2Timeshit
 
 This is a simple tool to convert Toggl reports to a timesheet format.
