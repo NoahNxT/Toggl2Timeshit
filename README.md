@@ -7,7 +7,7 @@ This is a simple tool to convert Toggl reports to a timesheet format.
 1. Install the package globally:
 
 ```bash
-npm install -g toggl2timesheet
+npm install -g toggl2timeshit
 ```
 
 2. Authenticate with your Toggle API key:
@@ -15,13 +15,13 @@ npm install -g toggl2timesheet
 > You can find it in your [Toggl Track Profile](https://track.toggl.com/profile).`
 
 ```bash
-timeshit login
+npx timeshit login
 ```
 
 3. Run the command to generate the timesheet:
 
 ```bash
-timeshit list
+npx timeshit list
 ```
 
 This will prompt you to select the workspace you want to generate the timesheet for.
