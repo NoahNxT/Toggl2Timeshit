@@ -29,6 +29,10 @@ jobs:
         run: pnpm install
       - name: configure registry
         run: pnpm config set '//registry.npmjs.org/:_authToken' "${NPM_TOKEN}"
-      - run: pnpm publish --provenance --access public
+      - uses: tobysmith568/npm-publish-latest-tag@v1
+        id: latest_tag
+        with:
+          package-json: ./package.json
+      - run: pnpm publish --tag ${{ steps.latest_tag.outputs.latest-tag }} --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
