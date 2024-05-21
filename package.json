@@ -1,6 +1,5 @@
 {
   "name": "toggl2timesheet",
-  "version": "0.0.1",
   "description": "A CLI to summarize your day",
   "main": "index.js",
   "scripts": {
