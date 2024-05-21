@@ -1,4 +1,4 @@
-# Toggl2Timesheet
+# Toggl2Timeshit
 
 This is a simple tool to convert Toggl reports to a timesheet format.
 
