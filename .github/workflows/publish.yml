@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
     inputs:
       release-type:
-        description: 'Release type (one of): patch, minor, major, prepatch, preminor, premajor, prerelease'
+        description: "Release type (one of): patch, minor, major, prepatch, preminor, premajor, prerelease"
         required: true
 env:
   NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -15,7 +15,7 @@ jobs:
       id-token: write
     strategy:
       matrix:
-        node-version: [ 20 ]
+        node-version: [20]
     steps:
       - uses: actions/checkout@v4
       - name: Install pnpm
@@ -26,7 +26,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
-          cache: 'pnpm'
+          cache: "pnpm"
       - name: Install dependencies
         run: pnpm install
 
@@ -63,7 +63,7 @@ jobs:
           git commit -m "🔖 release ${{ env.NEW_VERSION }}"
           git tag ${{ env.NEW_VERSION }}
 
-     # Configure npm registry
+      # Configure npm registry
       - name: configure registry
         run: pnpm config set '//registry.npmjs.org/:_authToken' "${NPM_TOKEN}"
 
