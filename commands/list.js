@@ -124,7 +124,11 @@ export async function list() {
 
   const projectsJson = await projectsResponse.json();
 
-  const groupedEntries = timeEntriesJson.reduce((acc, entry) => {
+  const validTimeEntries = timeEntriesJson.filter(
+    (entry) => entry.stop !== null,
+  );
+
+  const groupedEntries = validTimeEntries.reduce((acc, entry) => {
     const projectId = entry.project_id;
     if (!acc[projectId]) {
       acc[projectId] = {
@@ -175,7 +179,7 @@ export async function list() {
     console.log();
   });
 
-  const yesterdayEntries = timeEntriesJson.filter((entry) =>
+  const yesterdayEntries = validTimeEntries.filter((entry) =>
     dayjs(entry.start).isBetween(yesterday, today),
   );
   const totalHoursYesterday = yesterdayEntries.reduce(
