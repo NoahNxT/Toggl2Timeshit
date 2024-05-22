@@ -37,9 +37,9 @@ npx timeshit list
 ```
 
 ### Generate Timesheet for a Custom Date Range
-You can specify a custom date range using the --startDate (-sd) and --endDate (-ed) options:
+You can specify a custom date range using the --start-date (-sd) and --end-date (-ed) options:
 ```bash
-npx timeshit list --start-date YYYY-MM-DD --endDate YYYY-MM-DD
+npx timeshit list --start-date YYYY-MM-DD --end-date YYYY-MM-DD
 ```
 
 ### Generate Timesheet for a Specific Date
@@ -49,10 +49,8 @@ npx timeshit list --date YYYY-MM-DD
 ```
 
 
-## Generate Timesheet from a Date to Today
-You can specify a custom date range using the --startDate (-sd) option alone:
-```bash
-You can also specify a specific date using the --startDate (-sd) option alone:
+## Generate Timesheets from a Date until Today
+You can specify a custom date range using the --start-date (-sd) option alone:
 
 ```bash
 npx timeshit list --start-date YYYY-MM-DD
