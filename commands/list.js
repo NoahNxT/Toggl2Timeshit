@@ -9,6 +9,7 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import createPrompt from "prompt-sync";
+import { program } from "commander";
 
 const prompt = createPrompt({});
 
@@ -31,12 +32,8 @@ const yesterday = dayjs()
 const today = dayjs().tz(currTz).startOf("day").toISOString();
 const tomorrow = dayjs().add(1, "days").tz(currTz).startOf("day").toISOString();
 
-const timeEntriesUrl = `https://api.track.toggl.com/api/v9/me/time_entries?start_date=${today}&end_date=${tomorrow}`;
-
-const timeEntriesJson = await fetchTimeEntries();
-
-async function fetchTimeEntries() {
-  const timeEntriesResponse = await fetch(timeEntriesUrl, {
+async function fetchTimeEntries(url) {
+  const timeEntriesResponse = await fetch(url, {
     method: "GET",
     headers: {
       "Content-Type": "application/json",
@@ -101,11 +98,24 @@ async function selectWorkspaceId() {
   return workspaces[selectedIndex - 1].id;
 }
 
-export async function list() {
+export async function list(options) {
+  const { startDate, endDate } = options;
+
   const workspaceId = await selectWorkspaceId();
   if (!workspaceId) {
     return;
   }
+
+  // Use provided dates or default to today and tomorrow
+  const start = startDate
+    ? dayjs(startDate).tz(currTz).startOf("day").toISOString()
+    : today;
+  const end = endDate
+    ? dayjs(endDate).tz(currTz).startOf("day").toISOString()
+    : tomorrow;
+
+  const timeEntriesUrl = `https://api.track.toggl.com/api/v9/me/time_entries?start_date=${start}&end_date=${end}`;
+  const timeEntriesJson = await fetchTimeEntries(timeEntriesUrl);
 
   const projectsUrl = `https://api.track.toggl.com/api/v9/workspaces/${workspaceId}/projects`;
 
@@ -164,7 +174,7 @@ export async function list() {
     console.log(chalk.green("+".repeat(projectName.length)));
 
     console.log(
-      chalk.white(`Total hours today: ${projectData.totalHours.toFixed(2)}`),
+      chalk.white(`Total hours: ${projectData.totalHours.toFixed(2)}`),
     );
     console.log();
 
@@ -179,29 +189,19 @@ export async function list() {
     console.log();
   });
 
-  const yesterdayEntries = validTimeEntries.filter((entry) =>
-    dayjs(entry.start).isBetween(yesterday, today),
+  const filteredEntries = validTimeEntries.filter((entry) =>
+    dayjs(entry.start).isBetween(start, end),
   );
-  const totalHoursYesterday = yesterdayEntries.reduce(
+  const totalHours = filteredEntries.reduce(
     (acc, entry) => acc + entry.duration / 3600,
     0,
   );
 
   console.log(chalk.yellow("============================="));
-  const totalHoursToday = Object.values(groupedEntries).reduce(
-    (acc, project) => acc + project.totalHours,
-    0,
-  );
-  if (totalHoursToday < 8) {
-    console.log(chalk.red(`Total hours today: ${totalHoursToday.toFixed(2)}`));
+  if (totalHours < 8) {
+    console.log(chalk.red(`Total hours: ${totalHours.toFixed(2)}`));
   } else {
-    console.log(
-      chalk.green(`Total hours today: ${totalHoursToday.toFixed(2)}`),
-    );
+    console.log(chalk.green(`Total hours: ${totalHours.toFixed(2)}`));
   }
-  console.log(
-    chalk.yellow(`Total hours yesterday: ${totalHoursYesterday.toFixed(2)}`),
-  );
-
   console.log();
 }

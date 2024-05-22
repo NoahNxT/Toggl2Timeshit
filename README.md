@@ -5,44 +5,58 @@
 
 # Toggl2Timeshit
 
-This is a simple tool to convert Toggl reports to a timesheet format.
+Toggl2Timeshit is a simple yet powerful tool to convert Toggl Track reports into a user-friendly timesheet format.
 
-## Usage
+## Features
+- Fetch time entries from Toggl Track.
+- Group and display time entries by project.
+- Summarize total hours spent per project and per day.
+- Support for custom date ranges.
 
-1. Install the package globally:
+## Installation
 
+Install the package globally using npm:
 ```bash
 npm install -g toggl2timeshit
 ```
 
-2. Authenticate with your Toggle API key:
-
-> You can find it in your [Toggl Track Profile](https://track.toggl.com/profile).`
+## Authentication
+ 
+You can find it in your [Toggl Track Profile](https://track.toggl.com/profile).`
 
 ```bash
 npx timeshit login
 ```
 
-3. Run the command to generate the timesheet:
+## Usage
+### Generate Timesheet for Today
 
+Run the command to generate the timesheet for today:
 ```bash
 npx timeshit list
 ```
 
-This will prompt you to select the workspace you want to generate the timesheet for.
+## Generate Timesheet for a Custom Date Range
+You can also specify a custom date range using the --startDate (-sd) and --endDate (-ed) options:
 
-Type the number of the workspace and press enter.
+```bash
+npx timeshit list --startDate YYYY-MM-DD --endDate YYYY-MM-DD
+```
 
-![Select workspace](./docs/images/select-workspace.png)
+## Generate Timesheet for a Specific Date
+You can also specify a specific date using the --startDate (-sd) option alone:
 
-OUPUT:
+```bash
+npx timeshit list --startDate YYYY-MM-DD
+```
 
+## Example Output
 ```bash
 Your current time entries:
 
 Project A
 +++++++++
-Total hours today: 0.60
+Total hours: 0.60
 
 Tickets:
 • Entry 1 name (0.27)
@@ -52,7 +66,7 @@ Tickets:
 
 Project B
 +++++++++
-Total hours today: 1.56
+Total hours: 1.56
 
 Tickets:
 • Entry 1 name (0.61)
@@ -63,7 +77,7 @@ Tickets:
 
 Project C
 +++++++++
-Total hours today: 0.53
+Total hours: 0.53
 
 Tickets:
 • Entry 1 name (0.53)
@@ -74,3 +88,16 @@ Tickets:
 Total hours today: 3.49
 Total hours yesterday: 0.00
 ```
+
+## Contributing
+We welcome contributions to Toggl2Timeshit! If you have any improvements or bug fixes, please open an issue or submit a pull request on GitHub.
+
+## License
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Connect
+- Follow me on Twitter: [@does_it_code](https://twitter.com/does_it_code)
+- Connect with me on LinkedIn: [Noah Nxumalo](https://www.linkedin.com/in/noah-gillard/)
+
+Feel free to reach out with any questions or feedback! Enjoy using Toggl2Timeshit to simplify your timesheet generation.
+
