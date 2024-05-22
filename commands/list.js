@@ -1,139 +1,46 @@
 import chalk from "chalk";
-import fetch from "node-fetch";
-import { Buffer } from "buffer";
-import dayjs from "dayjs";
-import utc from "dayjs/plugin/utc.js";
-import timezone from "dayjs/plugin/timezone.js";
-import isBetween from "dayjs/plugin/isBetween.js";
-import fs from "fs";
-import path from "path";
-import os from "os";
-import createPrompt from "prompt-sync";
-import { program } from "commander";
-
-const prompt = createPrompt({});
-
-dayjs.extend(utc);
-dayjs.extend(timezone);
-dayjs.extend(isBetween);
-
-const filePath = path.join(os.homedir(), ".toggl2tsc");
-
-const token = fs.readFileSync(filePath, "utf8");
-
-const base64Credentials = Buffer.from(`${token}:api_token`).toString("base64");
-
-const currTz = "Europe/Brussels";
-const today = dayjs().tz(currTz).startOf("day").toISOString();
-const tomorrow = dayjs().add(1, "days").tz(currTz).startOf("day").toISOString();
-
-async function fetchTimeEntries(url) {
-  const timeEntriesResponse = await fetch(url, {
-    method: "GET",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Basic ${base64Credentials}`,
-    },
-  });
-
-  if (!timeEntriesResponse.ok) {
-    console.error("Failed to fetch data from Toggl API");
-    return [];
-  }
-
-  return await timeEntriesResponse.json();
-}
-
-async function fetchWorkspaces() {
-  const workspacesUrl = `https://api.track.toggl.com/api/v9/workspaces`;
-
-  const workspacesResponse = await fetch(workspacesUrl, {
-    method: "GET",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Basic ${base64Credentials}`,
-    },
-  });
-
-  if (!workspacesResponse.ok) {
-    console.error("Failed to fetch workspaces from Toggl API");
-    return [];
-  }
-
-  return await workspacesResponse.json();
-}
-
-async function selectWorkspaceId() {
-  const workspaces = await fetchWorkspaces();
-
-  if (workspaces.length === 0) {
-    console.error("No workspaces found");
-    return null;
-  }
-
-  console.log(chalk.green("Select a workspace ID:"));
-  workspaces.forEach((workspace, index) => {
-    console.log(chalk.blueBright(`${index + 1}. ${workspace.name}`));
-  });
-
-  const userInput = prompt(
-    "Enter the number corresponding to the workspace ID: ",
-  );
-  const selectedIndex = parseInt(userInput);
-
-  if (
-    isNaN(selectedIndex) ||
-    selectedIndex < 1 ||
-    selectedIndex > workspaces.length
-  ) {
-    console.error("Invalid selection");
-    return null;
-  }
-
-  return workspaces[selectedIndex - 1].id;
-}
+import { fetchTimeEntries, fetchProjects } from "../api/toggl.js";
+import {
+  getStartOfDay,
+  getEndOfDay,
+  getCurrentDay,
+  getNextDay,
+  isBetweenDates,
+  getEndOfToday,
+} from "../utils/dateUtils.js";
+import { selectWorkspaceId } from "../utils/promptUtils.js";
 
 export async function list(options) {
   const { startDate, endDate, date } = options;
+
+  let start, end;
+  if (date) {
+    start = getStartOfDay(date);
+    end = getEndOfDay(date);
+  } else if (startDate && endDate) {
+    start = getStartOfDay(startDate);
+    end = getEndOfDay(endDate);
+  } else if (startDate) {
+    start = getStartOfDay(startDate);
+    end = endDate ? getEndOfDay(endDate) : getEndOfToday();
+  } else if (!startDate && endDate) {
+    console.error(chalk.red("Please provide a start date"));
+    return;
+  } else {
+    start = getCurrentDay();
+    end = getNextDay();
+  }
 
   const workspaceId = await selectWorkspaceId();
   if (!workspaceId) {
     return;
   }
 
-  // Determine the date range based on the provided options
-  let start, end;
-  if (date) {
-    start = dayjs(date).tz(currTz).startOf("day").toISOString();
-    end = dayjs(date).tz(currTz).add(1, "day").startOf("day").toISOString();
-  } else {
-    start = startDate
-      ? dayjs(startDate).tz(currTz).startOf("day").toISOString()
-      : today;
-    end = endDate
-      ? dayjs(endDate).tz(currTz).startOf("day").toISOString()
-      : tomorrow;
-  }
+  const timeEntriesJson = await fetchTimeEntries(start, end);
+  if (!timeEntriesJson) return;
 
-  const timeEntriesUrl = `https://api.track.toggl.com/api/v9/me/time_entries?start_date=${start}&end_date=${end}`;
-  const timeEntriesJson = await fetchTimeEntries(timeEntriesUrl);
-
-  const projectsUrl = `https://api.track.toggl.com/api/v9/workspaces/${workspaceId}/projects`;
-
-  const projectsResponse = await fetch(projectsUrl, {
-    method: "GET",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Basic ${base64Credentials}`,
-    },
-  });
-
-  if (!projectsResponse.ok) {
-    console.error("Failed to fetch data from Toggl API");
-    return;
-  }
-
-  const projectsJson = await projectsResponse.json();
+  const projectsJson = await fetchProjects(workspaceId);
+  if (!projectsJson) return;
 
   const validTimeEntries = timeEntriesJson.filter(
     (entry) => entry.stop !== null,
@@ -142,11 +49,7 @@ export async function list(options) {
   const groupedEntries = validTimeEntries.reduce((acc, entry) => {
     const projectId = entry.project_id;
     if (!acc[projectId]) {
-      acc[projectId] = {
-        name: null,
-        entries: {},
-        totalHours: 0,
-      };
+      acc[projectId] = { entries: {}, totalHours: 0 };
     }
     if (!acc[projectId].entries[entry.description]) {
       acc[projectId].entries[entry.description] = {
@@ -159,10 +62,10 @@ export async function list(options) {
     return acc;
   }, {});
 
-  const projectNamesMap = {};
-  projectsJson.forEach((project) => {
-    projectNamesMap[project.id] = project.name;
-  });
+  const projectNamesMap = projectsJson.reduce((map, project) => {
+    map[project.id] = project.name;
+    return map;
+  }, {});
 
   console.log(chalk.green("Your current time entries:"));
   console.log();
@@ -173,7 +76,6 @@ export async function list(options) {
 
     console.log(chalk.green(`${projectName}`));
     console.log(chalk.green("+".repeat(projectName.length)));
-
     console.log(
       chalk.white(`Total hours: ${projectData.totalHours.toFixed(2)}`),
     );
@@ -191,7 +93,7 @@ export async function list(options) {
   });
 
   const filteredEntries = validTimeEntries.filter((entry) =>
-    dayjs(entry.start).isBetween(start, end),
+    isBetweenDates(entry, start, end),
   );
   const totalHours = filteredEntries.reduce(
     (acc, entry) => acc + entry.duration / 3600,
