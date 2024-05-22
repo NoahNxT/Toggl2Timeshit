@@ -1,7 +1,7 @@
 {
   "name": "toggl2timeshit",
   "description": "A CLI to summarize your day",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
