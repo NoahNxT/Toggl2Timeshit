@@ -9,6 +9,7 @@ program
   .command("list")
   .option("-sd, --start-date <date>", "Start date for time entries YYYY-MM-DD")
   .option("-ed, --end-date <date>", "End date for time entries YYYY-MM-DD")
+  .option("-d, --date <date>", "Date for time entries YYYY-MM-DD")
   .description("List tracked time registries per project.")
   .action(list);
 

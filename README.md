@@ -36,18 +36,26 @@ Run the command to generate the timesheet for today:
 npx timeshit list
 ```
 
-## Generate Timesheet for a Custom Date Range
-You can also specify a custom date range using the --startDate (-sd) and --endDate (-ed) options:
-
+### Generate Timesheet for a Custom Date Range
+You can specify a custom date range using the --startDate (-sd) and --endDate (-ed) options:
 ```bash
-npx timeshit list --startDate YYYY-MM-DD --endDate YYYY-MM-DD
+npx timeshit list --start-date YYYY-MM-DD --endDate YYYY-MM-DD
 ```
 
-## Generate Timesheet for a Specific Date
+### Generate Timesheet for a Specific Date
+You can specify a specific date using the --date (-d) option alone:
+```bash
+npx timeshit list --date YYYY-MM-DD
+```
+
+
+## Generate Timesheet from a Date to Today
+You can specify a custom date range using the --startDate (-sd) option alone:
+```bash
 You can also specify a specific date using the --startDate (-sd) option alone:
 
 ```bash
-npx timeshit list --startDate YYYY-MM-DD
+npx timeshit list --start-date YYYY-MM-DD
 ```
 
 ## Example Output
@@ -97,7 +105,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Connect
 - Follow me on Twitter: [@does_it_code](https://twitter.com/does_it_code)
-- Connect with me on LinkedIn: [Noah Nxumalo](https://www.linkedin.com/in/noah-gillard/)
+- Connect with me on LinkedIn: [Noah Gillard](https://www.linkedin.com/in/noah-gillard/)
 
 Feel free to reach out with any questions or feedback! Enjoy using Toggl2Timeshit to simplify your timesheet generation.
 

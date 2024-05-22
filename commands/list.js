@@ -24,11 +24,6 @@ const token = fs.readFileSync(filePath, "utf8");
 const base64Credentials = Buffer.from(`${token}:api_token`).toString("base64");
 
 const currTz = "Europe/Brussels";
-const yesterday = dayjs()
-  .subtract(1, "days")
-  .tz(currTz)
-  .startOf("day")
-  .toISOString();
 const today = dayjs().tz(currTz).startOf("day").toISOString();
 const tomorrow = dayjs().add(1, "days").tz(currTz).startOf("day").toISOString();
 
@@ -99,20 +94,26 @@ async function selectWorkspaceId() {
 }
 
 export async function list(options) {
-  const { startDate, endDate } = options;
+  const { startDate, endDate, date } = options;
 
   const workspaceId = await selectWorkspaceId();
   if (!workspaceId) {
     return;
   }
 
-  // Use provided dates or default to today and tomorrow
-  const start = startDate
-    ? dayjs(startDate).tz(currTz).startOf("day").toISOString()
-    : today;
-  const end = endDate
-    ? dayjs(endDate).tz(currTz).startOf("day").toISOString()
-    : tomorrow;
+  // Determine the date range based on the provided options
+  let start, end;
+  if (date) {
+    start = dayjs(date).tz(currTz).startOf("day").toISOString();
+    end = dayjs(date).tz(currTz).add(1, "day").startOf("day").toISOString();
+  } else {
+    start = startDate
+      ? dayjs(startDate).tz(currTz).startOf("day").toISOString()
+      : today;
+    end = endDate
+      ? dayjs(endDate).tz(currTz).startOf("day").toISOString()
+      : tomorrow;
+  }
 
   const timeEntriesUrl = `https://api.track.toggl.com/api/v9/me/time_entries?start_date=${start}&end_date=${end}`;
   const timeEntriesJson = await fetchTimeEntries(timeEntriesUrl);
