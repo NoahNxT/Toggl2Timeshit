@@ -1,11 +1,12 @@
 use chrono::{DateTime, Local};
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::widgets::ListState;
+use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use crate::dates::{parse_date, DateRange};
 use crate::grouping::{group_entries, GroupedProject};
-use crate::models::{Project, TimeEntry, Workspace};
+use crate::models::{Client as TogglClientModel, Project, TimeEntry, Workspace};
 use crate::storage::{
     self, CacheFile, CachedData, QuotaFile, ThemePreference,
 };
@@ -227,6 +228,11 @@ impl App {
             None => return,
         };
 
+        let client_names = match self.resolve_client_names(&client, allow_api, workspace.id, &projects) {
+            Some(names) => names,
+            None => return,
+        };
+
         let (start, end) = self.date_range.as_rfc3339();
         let time_entries = match self.resolve_time_entries(
             &client,
@@ -246,7 +252,7 @@ impl App {
             .filter(|entry| entry.stop.is_some())
             .collect();
 
-        let grouped = group_entries(&valid_entries, &projects);
+        let grouped = group_entries(&valid_entries, &projects, &client_names);
         let total_hours = grouped.iter().map(|group| group.total_hours).sum();
 
         if self.project_state.selected().is_none() {
@@ -553,14 +559,43 @@ impl App {
 
     fn format_entries_for_clipboard(&self, include_project: bool) -> String {
         let mut lines: Vec<String> = Vec::new();
-        for project in &self.grouped {
-            for entry in &project.entries {
-                if include_project {
+        if include_project {
+            let mut items: Vec<(Option<String>, String, String, f64)> = Vec::new();
+            for project in &self.grouped {
+                let client_name = project.client_name.clone();
+                for entry in &project.entries {
+                    items.push((
+                        client_name.clone(),
+                        project.project_name.clone(),
+                        entry.description.clone(),
+                        entry.total_hours,
+                    ));
+                }
+            }
+            items.sort_by(|a, b| {
+                match (&a.0, &b.0) {
+                    (Some(a), Some(b)) => a.cmp(b),
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (None, None) => std::cmp::Ordering::Equal,
+                }
+                .then_with(|| a.1.cmp(&b.1))
+                .then_with(|| a.2.cmp(&b.2))
+            });
+
+            for (client, project, entry, hours) in items {
+                if let Some(client) = client {
                     lines.push(format!(
-                        "• {} — {} ({:.2}h)",
-                        project.name, entry.description, entry.total_hours
+                        "• {} — {} — {} ({:.2}h)",
+                        client, project, entry, hours
                     ));
                 } else {
+                    lines.push(format!("• {} — {} ({:.2}h)", project, entry, hours));
+                }
+            }
+        } else {
+            for project in &self.grouped {
+                for entry in &project.entries {
                     lines.push(format!("• {} ({:.2}h)", entry.description, entry.total_hours));
                 }
             }
@@ -690,6 +725,12 @@ impl App {
             .and_then(|cache| cache.projects.get(&workspace_id).cloned())
     }
 
+    fn cached_clients(&self, workspace_id: u64) -> Option<CachedData<Vec<TogglClientModel>>> {
+        self.cache
+            .as_ref()
+            .and_then(|cache| cache.clients.get(&workspace_id).cloned())
+    }
+
     fn cached_time_entries(
         &self,
         workspace_id: u64,
@@ -719,6 +760,16 @@ impl App {
         };
         let cache = self.cache_mut();
         cache.projects.insert(workspace_id, cached);
+        let _ = storage::write_cache(cache);
+    }
+
+    fn update_cache_clients(&mut self, workspace_id: u64, clients: &[TogglClientModel]) {
+        let cached = CachedData {
+            data: clients.to_vec(),
+            fetched_at: storage::now_rfc3339(),
+        };
+        let cache = self.cache_mut();
+        cache.clients.insert(workspace_id, cached);
         let _ = storage::write_cache(cache);
     }
 
@@ -848,6 +899,64 @@ impl App {
             self.status = Some(self.no_cache_message());
         }
         None
+    }
+
+    fn resolve_client_names(
+        &mut self,
+        client: &TogglClient,
+        allow_api: bool,
+        workspace_id: u64,
+        projects: &[Project],
+    ) -> Option<HashMap<u64, String>> {
+        let mut client_names = HashMap::new();
+        let mut missing = HashSet::new();
+
+        for project in projects {
+            if let Some(client_id) = project.client_id {
+                if let Some(name) = project.client_name.clone() {
+                    client_names.insert(client_id, name);
+                } else {
+                    missing.insert(client_id);
+                }
+            }
+        }
+
+        if missing.is_empty() {
+            return Some(client_names);
+        }
+
+        if let Some(cached) = self.cached_clients(workspace_id) {
+            for client in cached.data {
+                if missing.contains(&client.id) {
+                    client_names.insert(client.id, client.name);
+                }
+            }
+            return Some(client_names);
+        }
+
+        if !allow_api || self.quota_remaining() == 0 {
+            return Some(client_names);
+        }
+
+        self.consume_quota();
+        match client.fetch_clients(workspace_id) {
+            Ok(clients) => {
+                self.update_cache_clients(workspace_id, &clients);
+                for client in clients {
+                    if missing.contains(&client.id) {
+                        client_names.insert(client.id, client.name);
+                    }
+                }
+                Some(client_names)
+            }
+            Err(err) => {
+                if matches!(err, TogglError::Unauthorized) {
+                    self.handle_error(err);
+                    return None;
+                }
+                Some(client_names)
+            }
+        }
     }
 
     fn resolve_time_entries(

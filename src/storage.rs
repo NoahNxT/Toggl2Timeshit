@@ -7,7 +7,7 @@ use std::fs;
 use std::io;
 use std::path::PathBuf;
 
-use crate::models::{Project, TimeEntry, Workspace};
+use crate::models::{Client as TogglClientModel, Project, TimeEntry, Workspace};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -26,8 +26,13 @@ pub struct CachedData<T> {
 pub struct CacheFile {
     pub version: u32,
     pub token_hash: String,
+    #[serde(default)]
     pub workspaces: Option<CachedData<Vec<Workspace>>>,
+    #[serde(default)]
     pub projects: HashMap<u64, CachedData<Vec<Project>>>,
+    #[serde(default)]
+    pub clients: HashMap<u64, CachedData<Vec<TogglClientModel>>>,
+    #[serde(default)]
     pub time_entries: HashMap<String, CachedData<Vec<TimeEntry>>>,
 }
 
@@ -108,6 +113,7 @@ pub fn new_cache(token_hash: String) -> CacheFile {
         token_hash,
         workspaces: None,
         projects: HashMap::new(),
+        clients: HashMap::new(),
         time_entries: HashMap::new(),
     }
 }

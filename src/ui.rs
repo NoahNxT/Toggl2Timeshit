@@ -72,7 +72,7 @@ fn draw_dashboard(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
         .iter()
         .map(|group| {
             let line = Line::from(vec![
-                Span::styled(&group.name, Style::default().add_modifier(Modifier::BOLD)),
+                Span::styled(&group.display_name, Style::default().add_modifier(Modifier::BOLD)),
                 Span::styled(
                     format!("  {:.2}h", group.total_hours),
                     theme.muted_style(),

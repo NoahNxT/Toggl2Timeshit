@@ -3,7 +3,7 @@ use base64::Engine;
 use reqwest::blocking::Client;
 use serde::de::DeserializeOwned;
 
-use crate::models::{Project, TimeEntry, Workspace};
+use crate::models::{Client as TogglClientModel, Project, TimeEntry, Workspace};
 
 #[derive(Debug, Clone)]
 pub enum TogglError {
@@ -47,6 +47,14 @@ impl TogglClient {
     pub fn fetch_projects(&self, workspace_id: u64) -> Result<Vec<Project>, TogglError> {
         let url = format!(
             "https://api.track.toggl.com/api/v9/workspaces/{}/projects",
+            workspace_id
+        );
+        self.fetch(url)
+    }
+
+    pub fn fetch_clients(&self, workspace_id: u64) -> Result<Vec<TogglClientModel>, TogglError> {
+        let url = format!(
+            "https://api.track.toggl.com/api/v9/workspaces/{}/clients",
             workspace_id
         );
         self.fetch(url)

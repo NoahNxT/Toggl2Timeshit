@@ -10,6 +10,16 @@ pub struct Workspace {
 pub struct Project {
     pub id: u64,
     pub name: String,
+    #[serde(rename = "client_id")]
+    pub client_id: Option<u64>,
+    #[serde(rename = "client_name")]
+    pub client_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Client {
+    pub id: u64,
+    pub name: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
