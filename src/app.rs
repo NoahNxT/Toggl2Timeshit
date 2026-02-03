@@ -1,14 +1,18 @@
 use chrono::{DateTime, Local, NaiveDate};
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::widgets::ListState;
 use std::time::{Duration, Instant};
 
 use crate::dates::{parse_date, DateRange};
 use crate::grouping::{group_entries, GroupedProject};
 use crate::models::{Project, TimeEntry, Workspace};
-use crate::storage::{self, ThemePreference};
+use crate::storage::{
+    self, CacheFile, CachedData, QuotaFile, ThemePreference,
+};
 use crate::toggl::{TogglClient, TogglError};
 use arboard::Clipboard;
+
+const CALL_LIMIT: u32 = 30;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -25,6 +29,19 @@ pub enum DateInputMode {
     Single,
     Start,
     End,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RefreshIntent {
+    CacheOnly,
+    ForceApi,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CacheReason {
+    CacheOnly,
+    Quota,
+    ApiError,
 }
 
 pub struct App {
@@ -46,6 +63,10 @@ pub struct App {
     pub last_refresh: Option<DateTime<Local>>,
     pub show_help: bool,
     pub theme: ThemePreference,
+    token_hash: Option<String>,
+    cache: Option<CacheFile>,
+    quota: QuotaFile,
+    refresh_intent: RefreshIntent,
     toast: Option<Toast>,
 }
 
@@ -56,12 +77,13 @@ impl App {
         } else {
             storage::read_token()
         };
-        let mode = if token.is_some() {
-            Mode::Loading
-        } else {
-            Mode::Login
-        };
+        let mode = if token.is_some() { Mode::Loading } else { Mode::Login };
         let theme = storage::read_theme().unwrap_or(ThemePreference::Dark);
+        let token_hash = token.as_ref().map(|value| storage::hash_token(value));
+        let cache = token_hash
+            .as_ref()
+            .and_then(|hash| storage::read_cache().filter(|cache| cache.token_hash == *hash));
+        let quota = storage::read_quota();
         let mut project_state = ListState::default();
         project_state.select(Some(0));
         let mut workspace_state = ListState::default();
@@ -86,6 +108,10 @@ impl App {
             last_refresh: None,
             show_help: false,
             theme,
+            token_hash,
+            cache,
+            quota,
+            refresh_intent: RefreshIntent::CacheOnly,
             toast: None,
         }
     }
@@ -102,6 +128,7 @@ impl App {
     pub fn refresh_data(&mut self) {
         self.needs_refresh = false;
         self.status = None;
+        self.ensure_quota_today();
 
         let token = match self.token.clone() {
             Some(token) => token,
@@ -111,14 +138,37 @@ impl App {
             }
         };
 
-        let client = TogglClient::new(token);
-
-        let workspaces = match client.fetch_workspaces() {
-            Ok(workspaces) => workspaces,
-            Err(err) => {
-                self.handle_error(err);
-                return;
+        let token_hash = match self.token_hash.clone() {
+            Some(hash) => hash,
+            None => {
+                let hash = storage::hash_token(&token);
+                self.token_hash = Some(hash.clone());
+                hash
             }
+        };
+
+        self.ensure_cache_loaded(&token_hash);
+        let manual_refresh = matches!(self.refresh_intent, RefreshIntent::ForceApi);
+        let mut allow_api = manual_refresh;
+        self.refresh_intent = RefreshIntent::CacheOnly;
+
+        let client = TogglClient::new(token);
+        let mut cache_reason: Option<CacheReason> = None;
+        let mut cache_timestamp: Option<String> = None;
+
+        if allow_api && self.quota_remaining() < 3 {
+            allow_api = false;
+            cache_reason = Some(CacheReason::Quota);
+        }
+
+        let workspaces = match self.resolve_workspaces(
+            &client,
+            allow_api,
+            &mut cache_reason,
+            &mut cache_timestamp,
+        ) {
+            Some(workspaces) => workspaces,
+            None => return,
         };
 
         if workspaces.is_empty() {
@@ -141,6 +191,9 @@ impl App {
                 self.selected_workspace = Some(self.workspace_list[0].clone());
             } else {
                 self.mode = Mode::WorkspaceSelect;
+                if manual_refresh {
+                    self.refresh_intent = RefreshIntent::ForceApi;
+                }
                 return;
             }
         }
@@ -153,21 +206,29 @@ impl App {
             }
         };
 
-        let projects = match client.fetch_projects(workspace.id) {
-            Ok(projects) => projects,
-            Err(err) => {
-                self.handle_error(err);
-                return;
-            }
+        let projects = match self.resolve_projects(
+            &client,
+            allow_api,
+            workspace.id,
+            &mut cache_reason,
+            &mut cache_timestamp,
+        ) {
+            Some(projects) => projects,
+            None => return,
         };
 
         let (start, end) = self.date_range.as_rfc3339();
-        let time_entries = match client.fetch_time_entries(&start, &end) {
-            Ok(entries) => entries,
-            Err(err) => {
-                self.handle_error(err);
-                return;
-            }
+        let time_entries = match self.resolve_time_entries(
+            &client,
+            allow_api,
+            workspace.id,
+            &start,
+            &end,
+            &mut cache_reason,
+            &mut cache_timestamp,
+        ) {
+            Some(entries) => entries,
+            None => return,
         };
 
         let valid_entries: Vec<TimeEntry> = time_entries
@@ -190,7 +251,22 @@ impl App {
         self.time_entries = valid_entries;
         self.grouped = grouped;
         self.total_hours = total_hours;
-        self.last_refresh = Some(Local::now());
+        self.last_refresh = if allow_api && cache_reason.is_none() {
+            Some(Local::now())
+        } else {
+            cache_timestamp
+                .as_ref()
+                .and_then(|value| parse_cached_time(value))
+        };
+
+        if let Some(reason) = cache_reason {
+            let message = self.cache_status_message(reason, cache_timestamp.as_deref());
+            if reason == CacheReason::Quota && manual_refresh {
+                self.set_toast(message.clone(), true);
+            }
+            self.status = Some(message);
+        }
+
         self.mode = Mode::Dashboard;
     }
 
@@ -198,10 +274,20 @@ impl App {
         match err {
             TogglError::Unauthorized => {
                 self.token = None;
+                self.token_hash = None;
+                self.cache = None;
                 self.mode = Mode::Login;
                 self.status = Some("Invalid token. Please login.".to_string());
             }
-            TogglError::Network(message) => {
+            TogglError::PaymentRequired => {
+                self.mode = Mode::Error;
+                self.status = Some("Toggl API error: 402 Payment Required".to_string());
+            }
+            TogglError::RateLimited => {
+                self.mode = Mode::Error;
+                self.status = Some("Toggl API rate limit reached.".to_string());
+            }
+            TogglError::ServerError(message) | TogglError::Network(message) => {
                 self.mode = Mode::Error;
                 self.status = Some(message);
             }
@@ -250,6 +336,9 @@ impl App {
                     if let Some(workspace) = self.workspace_list.get(index) {
                         self.selected_workspace = Some(workspace.clone());
                         self.mode = Mode::Loading;
+                        if self.refresh_intent != RefreshIntent::ForceApi {
+                            self.refresh_intent = RefreshIntent::CacheOnly;
+                        }
                         self.needs_refresh = true;
                     }
                 }
@@ -275,8 +364,14 @@ impl App {
                         return;
                     }
                     self.token = Some(self.input.trim().to_string());
+                    self.token_hash = Some(storage::hash_token(self.input.trim()));
+                    self.cache = self
+                        .token_hash
+                        .as_ref()
+                        .and_then(|hash| storage::read_cache().filter(|cache| cache.token_hash == *hash));
                     self.input.clear();
                     self.mode = Mode::Loading;
+                    self.refresh_intent = RefreshIntent::CacheOnly;
                     self.needs_refresh = true;
                 }
             }
@@ -316,6 +411,7 @@ impl App {
                         self.date_range = range;
                         self.input.clear();
                         self.mode = Mode::Loading;
+                        self.refresh_intent = RefreshIntent::CacheOnly;
                         self.needs_refresh = true;
                         self.status = None;
                     }
@@ -364,6 +460,7 @@ impl App {
 
     fn trigger_refresh(&mut self) {
         self.mode = Mode::Loading;
+        self.refresh_intent = RefreshIntent::ForceApi;
         self.needs_refresh = true;
     }
 
@@ -512,6 +609,312 @@ impl App {
             self.set_toast(format!("{label} enabled."), false);
         }
     }
+
+    fn ensure_quota_today(&mut self) {
+        let today = storage::today_string();
+        if self.quota.date != today {
+            self.quota.date = today;
+            self.quota.used_calls = 0;
+            let _ = storage::write_quota(&self.quota);
+        }
+    }
+
+    fn ensure_cache_loaded(&mut self, token_hash: &str) {
+        if self.cache.is_none() {
+            if let Some(cache) = storage::read_cache() {
+                if cache.token_hash == token_hash {
+                    self.cache = Some(cache);
+                }
+            }
+        }
+    }
+
+    fn quota_remaining(&self) -> u32 {
+        CALL_LIMIT.saturating_sub(self.quota.used_calls)
+    }
+
+    fn consume_quota(&mut self) {
+        self.quota.used_calls = self.quota.used_calls.saturating_add(1);
+        let _ = storage::write_quota(&self.quota);
+    }
+
+    fn cache_mut(&mut self) -> &mut CacheFile {
+        if self.cache.is_none() {
+            let token_hash = self.token_hash.clone().unwrap_or_default();
+            self.cache = Some(storage::new_cache(token_hash));
+        }
+        self.cache.as_mut().unwrap()
+    }
+
+    fn cached_workspaces(&self) -> Option<CachedData<Vec<Workspace>>> {
+        self.cache.as_ref().and_then(|cache| cache.workspaces.clone())
+    }
+
+    fn cached_projects(&self, workspace_id: u64) -> Option<CachedData<Vec<Project>>> {
+        self.cache
+            .as_ref()
+            .and_then(|cache| cache.projects.get(&workspace_id).cloned())
+    }
+
+    fn cached_time_entries(
+        &self,
+        workspace_id: u64,
+        start: &str,
+        end: &str,
+    ) -> Option<CachedData<Vec<TimeEntry>>> {
+        let key = storage::cache_key(workspace_id, start, end);
+        self.cache
+            .as_ref()
+            .and_then(|cache| cache.time_entries.get(&key).cloned())
+    }
+
+    fn update_cache_workspaces(&mut self, workspaces: &[Workspace]) {
+        let cached = CachedData {
+            data: workspaces.to_vec(),
+            fetched_at: storage::now_rfc3339(),
+        };
+        let cache = self.cache_mut();
+        cache.workspaces = Some(cached);
+        let _ = storage::write_cache(cache);
+    }
+
+    fn update_cache_projects(&mut self, workspace_id: u64, projects: &[Project]) {
+        let cached = CachedData {
+            data: projects.to_vec(),
+            fetched_at: storage::now_rfc3339(),
+        };
+        let cache = self.cache_mut();
+        cache.projects.insert(workspace_id, cached);
+        let _ = storage::write_cache(cache);
+    }
+
+    fn update_cache_time_entries(
+        &mut self,
+        workspace_id: u64,
+        start: &str,
+        end: &str,
+        entries: &[TimeEntry],
+    ) {
+        let cached = CachedData {
+            data: entries.to_vec(),
+            fetched_at: storage::now_rfc3339(),
+        };
+        let key = storage::cache_key(workspace_id, start, end);
+        let cache = self.cache_mut();
+        cache.time_entries.insert(key, cached);
+        let _ = storage::write_cache(cache);
+    }
+
+    fn resolve_workspaces(
+        &mut self,
+        client: &TogglClient,
+        allow_api: bool,
+        cache_reason: &mut Option<CacheReason>,
+        cache_timestamp: &mut Option<String>,
+    ) -> Option<Vec<Workspace>> {
+        let mut api_error: Option<TogglError> = None;
+        if allow_api {
+            if self.quota_remaining() == 0 {
+                if cache_reason.is_none() {
+                    *cache_reason = Some(CacheReason::Quota);
+                }
+            } else {
+                self.consume_quota();
+                match client.fetch_workspaces() {
+                    Ok(workspaces) => {
+                        self.update_cache_workspaces(&workspaces);
+                        return Some(workspaces);
+                    }
+                    Err(err) => {
+                        if matches!(err, TogglError::Unauthorized) {
+                            self.handle_error(err);
+                            return None;
+                        }
+                        api_error = Some(err);
+                        if cache_reason.is_none() {
+                            *cache_reason = Some(CacheReason::ApiError);
+                        }
+                    }
+                }
+            }
+        } else if cache_reason.is_none() {
+            *cache_reason = Some(CacheReason::CacheOnly);
+        }
+
+        if let Some(cached) = self.cached_workspaces() {
+            if cache_timestamp.is_none() {
+                *cache_timestamp = Some(cached.fetched_at.clone());
+            }
+            return Some(cached.data);
+        }
+
+        if let Some(err) = api_error {
+            self.handle_error(err);
+        } else if matches!(cache_reason, Some(CacheReason::Quota)) {
+            self.mode = Mode::Error;
+            self.status = Some(self.quota_exhausted_message());
+        } else {
+            self.mode = Mode::Error;
+            self.status = Some(self.no_cache_message());
+        }
+        None
+    }
+
+    fn resolve_projects(
+        &mut self,
+        client: &TogglClient,
+        allow_api: bool,
+        workspace_id: u64,
+        cache_reason: &mut Option<CacheReason>,
+        cache_timestamp: &mut Option<String>,
+    ) -> Option<Vec<Project>> {
+        let mut api_error: Option<TogglError> = None;
+        if allow_api {
+            if self.quota_remaining() == 0 {
+                if cache_reason.is_none() {
+                    *cache_reason = Some(CacheReason::Quota);
+                }
+            } else {
+                self.consume_quota();
+                match client.fetch_projects(workspace_id) {
+                    Ok(projects) => {
+                        self.update_cache_projects(workspace_id, &projects);
+                        return Some(projects);
+                    }
+                    Err(err) => {
+                        if matches!(err, TogglError::Unauthorized) {
+                            self.handle_error(err);
+                            return None;
+                        }
+                        api_error = Some(err);
+                        if cache_reason.is_none() {
+                            *cache_reason = Some(CacheReason::ApiError);
+                        }
+                    }
+                }
+            }
+        } else if cache_reason.is_none() {
+            *cache_reason = Some(CacheReason::CacheOnly);
+        }
+
+        if let Some(cached) = self.cached_projects(workspace_id) {
+            if cache_timestamp.is_none() {
+                *cache_timestamp = Some(cached.fetched_at.clone());
+            }
+            return Some(cached.data);
+        }
+
+        if let Some(err) = api_error {
+            self.handle_error(err);
+        } else if matches!(cache_reason, Some(CacheReason::Quota)) {
+            self.mode = Mode::Error;
+            self.status = Some(self.quota_exhausted_message());
+        } else {
+            self.mode = Mode::Error;
+            self.status = Some(self.no_cache_message());
+        }
+        None
+    }
+
+    fn resolve_time_entries(
+        &mut self,
+        client: &TogglClient,
+        allow_api: bool,
+        workspace_id: u64,
+        start: &str,
+        end: &str,
+        cache_reason: &mut Option<CacheReason>,
+        cache_timestamp: &mut Option<String>,
+    ) -> Option<Vec<TimeEntry>> {
+        let mut api_error: Option<TogglError> = None;
+        if allow_api {
+            if self.quota_remaining() == 0 {
+                if cache_reason.is_none() {
+                    *cache_reason = Some(CacheReason::Quota);
+                }
+            } else {
+                self.consume_quota();
+                match client.fetch_time_entries(start, end) {
+                    Ok(entries) => {
+                        self.update_cache_time_entries(workspace_id, start, end, &entries);
+                        return Some(entries);
+                    }
+                    Err(err) => {
+                        if matches!(err, TogglError::Unauthorized) {
+                            self.handle_error(err);
+                            return None;
+                        }
+                        api_error = Some(err);
+                        if cache_reason.is_none() {
+                            *cache_reason = Some(CacheReason::ApiError);
+                        }
+                    }
+                }
+            }
+        } else if cache_reason.is_none() {
+            *cache_reason = Some(CacheReason::CacheOnly);
+        }
+
+        if let Some(cached) = self.cached_time_entries(workspace_id, start, end) {
+            *cache_timestamp = Some(cached.fetched_at.clone());
+            return Some(cached.data);
+        }
+
+        if let Some(err) = api_error {
+            self.handle_error(err);
+        } else if matches!(cache_reason, Some(CacheReason::Quota)) {
+            self.mode = Mode::Error;
+            self.status = Some(self.quota_exhausted_message());
+        } else {
+            self.mode = Mode::Error;
+            self.status = Some(self.no_cache_message());
+        }
+        None
+    }
+
+    fn no_cache_message(&self) -> String {
+        "No cached data available. Press r to fetch.".to_string()
+    }
+
+    fn quota_exhausted_message(&self) -> String {
+        format!(
+            "{} No cached data available.",
+            self.quota_message()
+        )
+    }
+
+    fn cache_status_message(&self, reason: CacheReason, cached_at: Option<&str>) -> String {
+        let updated = cached_at
+            .and_then(|value| parse_cached_time(value))
+            .map(|value| format!(" (last updated {})", value.format("%Y-%m-%d %H:%M")))
+            .unwrap_or_default();
+        match reason {
+            CacheReason::CacheOnly => format!("Using cached data{updated}."),
+            CacheReason::Quota => format!(
+                "{} Using cached data{updated}.",
+                self.quota_message()
+            ),
+            CacheReason::ApiError => format!("Using cached data due to API error{updated}."),
+        }
+    }
+
+    fn quota_message(&self) -> String {
+        let remaining = self.quota_remaining();
+        if remaining == 0 {
+            format!("Quota reached ({}/{}).", self.quota.used_calls, CALL_LIMIT)
+        } else {
+            format!(
+                "Quota low (remaining {}/{}).",
+                remaining, CALL_LIMIT
+            )
+        }
+    }
+}
+
+fn parse_cached_time(value: &str) -> Option<DateTime<Local>> {
+    DateTime::parse_from_rfc3339(value)
+        .ok()
+        .map(|dt| dt.with_timezone(&Local))
 }
 
 struct Toast {

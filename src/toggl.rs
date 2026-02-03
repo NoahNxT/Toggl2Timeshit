@@ -8,6 +8,9 @@ use crate::models::{Project, TimeEntry, Workspace};
 #[derive(Debug, Clone)]
 pub enum TogglError {
     Unauthorized,
+    PaymentRequired,
+    RateLimited,
+    ServerError(String),
     Network(String),
 }
 
@@ -61,6 +64,21 @@ impl TogglClient {
 
         if response.status() == 401 || response.status() == 403 {
             return Err(TogglError::Unauthorized);
+        }
+
+        if response.status() == 402 {
+            return Err(TogglError::PaymentRequired);
+        }
+
+        if response.status() == 429 {
+            return Err(TogglError::RateLimited);
+        }
+
+        if response.status().is_server_error() {
+            return Err(TogglError::ServerError(format!(
+                "Toggl API error: {}",
+                response.status()
+            )));
         }
 
         if !response.status().is_success() {
