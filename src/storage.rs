@@ -8,6 +8,7 @@ use std::io;
 use std::path::PathBuf;
 
 use crate::models::{Client as TogglClientModel, Project, TimeEntry, Workspace};
+use crate::rounding::RoundingConfig;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -78,6 +79,8 @@ pub fn write_theme(theme: ThemePreference) -> Result<(), io::Error> {
 struct Config {
     theme: Option<ThemePreference>,
     target_hours: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    rounding: Option<RoundingConfig>,
 }
 
 fn config_path() -> Option<PathBuf> {
@@ -93,6 +96,16 @@ pub fn read_target_hours() -> Option<f64> {
 pub fn write_target_hours(value: f64) -> Result<(), io::Error> {
     let mut config = read_config().unwrap_or_default();
     config.target_hours = Some(value);
+    write_config(&config)
+}
+
+pub fn read_rounding() -> Option<RoundingConfig> {
+    read_config().and_then(|config| config.rounding)
+}
+
+pub fn write_rounding(value: Option<RoundingConfig>) -> Result<(), io::Error> {
+    let mut config = read_config().unwrap_or_default();
+    config.rounding = value;
     write_config(&config)
 }
 

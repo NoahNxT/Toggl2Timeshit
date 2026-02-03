@@ -39,5 +39,7 @@ Total hours: 8.00h
 - `s`: Settings modal
 - `m`: Toggle light/dark theme
 
+Settings → General includes optional **time rounding** (increment + mode).
+
 ## Status & Toasts
 Short status messages appear in the footer and auto-hide after a few seconds. Copy actions also show a small toast in the dashboard.

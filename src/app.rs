@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 use crate::dates::{parse_date, DateRange};
 use crate::grouping::{group_entries, GroupedEntry, GroupedProject};
 use crate::models::{Client as TogglClientModel, Project, TimeEntry, Workspace};
+use crate::rounding::{RoundingConfig, RoundingMode};
 use crate::storage::{
     self, CacheFile, CachedData, QuotaFile, ThemePreference,
 };
@@ -57,9 +58,19 @@ enum CacheReason {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SettingsMode {
-    SelectCategory,
-    EditValue,
+pub enum SettingsFocus {
+    Categories,
+    Items,
+    Edit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettingsItem {
+    TargetHours,
+    TimeRoundingToggle,
+    RoundingIncrement,
+    RoundingMode,
+    TogglToken,
 }
 
 pub struct App {
@@ -76,6 +87,7 @@ pub struct App {
     pub date_range: DateRange,
     pub projects: Vec<Project>,
     pub time_entries: Vec<TimeEntry>,
+    pub client_names: HashMap<u64, String>,
     pub grouped: Vec<GroupedProject>,
     pub total_hours: f64,
     pub project_state: ListState,
@@ -84,6 +96,7 @@ pub struct App {
     pub show_help: bool,
     pub theme: ThemePreference,
     pub target_hours: f64,
+    pub rounding: Option<RoundingConfig>,
     token_hash: Option<String>,
     cache: Option<CacheFile>,
     quota: QuotaFile,
@@ -94,7 +107,12 @@ pub struct App {
     settings_input: String,
     settings_categories: Vec<String>,
     settings_state: ListState,
-    settings_mode: SettingsMode,
+    settings_items: Vec<SettingsItem>,
+    settings_item_state: ListState,
+    settings_focus: SettingsFocus,
+    settings_edit_item: Option<SettingsItem>,
+    settings_rounding_draft: RoundingConfig,
+    settings_rounding_draft_enabled: bool,
     status_created_at: Option<Instant>,
     last_status_snapshot: Option<String>,
     toast: Option<Toast>,
@@ -110,6 +128,7 @@ impl App {
         let mode = if token.is_some() { Mode::Loading } else { Mode::Login };
         let theme = storage::read_theme().unwrap_or(ThemePreference::Dark);
         let target_hours = storage::read_target_hours().unwrap_or(8.0);
+        let rounding = storage::read_rounding();
         let token_hash = token.as_ref().map(|value| storage::hash_token(value));
         let cache = token_hash
             .as_ref()
@@ -134,6 +153,7 @@ impl App {
             date_range,
             projects: Vec::new(),
             time_entries: Vec::new(),
+            client_names: HashMap::new(),
             grouped: Vec::new(),
             total_hours: 0.0,
             project_state,
@@ -142,6 +162,7 @@ impl App {
             show_help: false,
             theme,
             target_hours,
+            rounding,
             token_hash,
             cache,
             quota,
@@ -156,7 +177,16 @@ impl App {
                 state.select(Some(0));
                 state
             },
-            settings_mode: SettingsMode::SelectCategory,
+            settings_items: Vec::new(),
+            settings_item_state: {
+                let mut state = ListState::default();
+                state.select(Some(0));
+                state
+            },
+            settings_focus: SettingsFocus::Categories,
+            settings_edit_item: None,
+            settings_rounding_draft: RoundingConfig::default(),
+            settings_rounding_draft_enabled: false,
             status_created_at: None,
             last_status_snapshot: None,
             toast: None,
@@ -289,7 +319,12 @@ impl App {
             .filter(|entry| entry.stop.is_some())
             .collect();
 
-        let grouped = group_entries(&valid_entries, &projects, &client_names);
+        let grouped = group_entries(
+            &valid_entries,
+            &projects,
+            &client_names,
+            self.rounding.as_ref(),
+        );
         let total_hours = grouped.iter().map(|group| group.total_hours).sum();
 
         if self.project_state.selected().is_none() {
@@ -302,6 +337,7 @@ impl App {
 
         self.projects = projects;
         self.time_entries = valid_entries;
+        self.client_names = client_names;
         self.grouped = grouped;
         self.total_hours = total_hours;
         self.last_refresh = if allow_api && cache_reason.is_none() {
@@ -523,9 +559,11 @@ impl App {
     }
 
     fn enter_settings(&mut self) {
-        self.settings_input = format!("{:.2}", self.target_hours);
+        self.settings_input.clear();
+        self.settings_focus = SettingsFocus::Categories;
+        self.settings_edit_item = None;
+        self.sync_settings_items_for_category();
         self.mode = Mode::Settings;
-        self.settings_mode = SettingsMode::SelectCategory;
         self.status = None;
     }
 
@@ -543,9 +581,10 @@ impl App {
     }
 
     fn handle_settings_input(&mut self, key: KeyEvent) {
-        match self.settings_mode {
-            SettingsMode::SelectCategory => self.handle_settings_category_input(key),
-            SettingsMode::EditValue => self.handle_settings_value_input(key),
+        match self.settings_focus {
+            SettingsFocus::Categories => self.handle_settings_category_input(key),
+            SettingsFocus::Items => self.handle_settings_items_input(key),
+            SettingsFocus::Edit => self.handle_settings_edit_input(key),
         }
     }
 
@@ -554,74 +593,90 @@ impl App {
             KeyCode::Char('q') => self.should_quit = true,
             KeyCode::Esc => {
                 self.settings_input.clear();
+                self.settings_edit_item = None;
+                self.settings_focus = SettingsFocus::Categories;
                 self.mode = Mode::Dashboard;
             }
             KeyCode::Up => self.select_previous_setting_category(),
             KeyCode::Down => self.select_next_setting_category(),
             KeyCode::Enter => {
-                self.sync_settings_input_for_category();
-                self.settings_mode = SettingsMode::EditValue;
+                self.sync_settings_items_for_category();
+                self.settings_focus = SettingsFocus::Items;
             }
             _ => {}
         }
     }
 
-    fn handle_settings_value_input(&mut self, key: KeyEvent) {
-        let category = self.settings_selected_category().to_string();
+    fn handle_settings_items_input(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Char('q') => self.should_quit = true,
+            KeyCode::Esc => {
+                self.settings_focus = SettingsFocus::Categories;
+                self.settings_edit_item = None;
+                self.settings_input.clear();
+            }
+            KeyCode::Up => self.select_previous_setting_item(),
+            KeyCode::Down => self.select_next_setting_item(),
             KeyCode::Enter => {
-                if category == "Integrations" {
-                    let token = self.settings_input.trim().to_string();
-                    if token.is_empty() {
-                        self.status = Some("Token is required.".to_string());
-                        return;
-                    }
-                    if let Err(err) = storage::write_token(&token) {
-                        self.status = Some(format!("Failed to save token: {err}"));
-                        return;
-                    }
-                    self.token = Some(token.clone());
-                    self.token_hash = Some(storage::hash_token(&token));
-                    self.cache = self
-                        .token_hash
-                        .as_ref()
-                        .and_then(|hash| storage::read_cache().filter(|cache| cache.token_hash == *hash))
-                        .or_else(|| self.token_hash.clone().map(storage::new_cache));
-                    self.status = Some("Toggl token updated.".to_string());
-                    self.set_toast("Token updated.", false);
-                    self.settings_mode = SettingsMode::SelectCategory;
-                    self.mode = Mode::Loading;
-                    self.refresh_intent = RefreshIntent::CacheOnly;
-                    self.needs_refresh = true;
-                } else {
-                    let parsed = match self.parse_target_hours() {
-                        Ok(value) => value,
-                        Err(message) => {
-                            self.status = Some(message);
-                            return;
-                        }
-                    };
-                    if let Err(err) = storage::write_target_hours(parsed) {
-                        self.status = Some(format!("Failed to save: {err}"));
-                        return;
-                    }
-                    self.target_hours = parsed;
-                    self.settings_input = format!("{:.2}", parsed);
-                    self.status = Some("Target hours updated.".to_string());
-                    self.set_toast("Target hours saved.", false);
-                    self.settings_mode = SettingsMode::SelectCategory;
+                self.begin_edit_selected_setting_item();
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_settings_edit_input(&mut self, key: KeyEvent) {
+        let Some(item) = self.settings_edit_item else {
+            self.settings_focus = SettingsFocus::Items;
+            return;
+        };
+
+        match key.code {
+            KeyCode::Char('q') => self.should_quit = true,
+            KeyCode::Esc => {
+                self.settings_input.clear();
+                self.settings_edit_item = None;
+                self.settings_focus = SettingsFocus::Items;
+            }
+            KeyCode::Enter => {
+                self.save_setting_item(item);
+            }
+            KeyCode::Up => match item {
+                SettingsItem::TimeRoundingToggle => {
+                    self.settings_rounding_draft_enabled = !self.settings_rounding_draft_enabled;
                 }
-            }
-            KeyCode::Backspace => {
-                self.settings_input.pop();
-            }
-            KeyCode::Char(ch) => {
-                if category == "Integrations" {
+                SettingsItem::RoundingIncrement => {
+                    self.cycle_rounding_increment(true);
+                }
+                SettingsItem::RoundingMode => {
+                    self.cycle_rounding_mode(true);
+                }
+                _ => {}
+            },
+            KeyCode::Down => match item {
+                SettingsItem::TimeRoundingToggle => {
+                    self.settings_rounding_draft_enabled = !self.settings_rounding_draft_enabled;
+                }
+                SettingsItem::RoundingIncrement => {
+                    self.cycle_rounding_increment(false);
+                }
+                SettingsItem::RoundingMode => {
+                    self.cycle_rounding_mode(false);
+                }
+                _ => {}
+            },
+            KeyCode::Backspace => match item {
+                SettingsItem::TargetHours | SettingsItem::TogglToken => {
+                    self.settings_input.pop();
+                }
+                _ => {}
+            },
+            KeyCode::Char(ch) => match item {
+                SettingsItem::TogglToken => {
                     if !ch.is_control() {
                         self.settings_input.push(ch);
                     }
-                } else {
+                }
+                SettingsItem::TargetHours => {
                     if ch.is_ascii_digit() {
                         self.settings_input.push(ch);
                         return;
@@ -636,11 +691,8 @@ impl App {
                         self.settings_input.push(ch);
                     }
                 }
-            }
-            KeyCode::Esc => {
-                self.settings_input.clear();
-                self.settings_mode = SettingsMode::SelectCategory;
-            }
+                _ => {}
+            },
             _ => {}
         }
     }
@@ -679,6 +731,241 @@ impl App {
         Ok((parsed * 100.0).round() / 100.0)
     }
 
+    fn rebuild_grouped(&mut self) {
+        let selected_project_key = self.current_project().map(|project| {
+            (
+                project.client_name.clone(),
+                project.project_name.clone(),
+            )
+        });
+        let selected_entry_key = self.current_entry().map(|entry| entry.description.clone());
+
+        let grouped = group_entries(
+            &self.time_entries,
+            &self.projects,
+            &self.client_names,
+            self.rounding.as_ref(),
+        );
+        let total_hours: f64 = grouped.iter().map(|group| group.total_hours).sum();
+
+        self.grouped = grouped;
+        self.total_hours = total_hours;
+
+        if let Some((client_name, project_name)) = selected_project_key {
+            if let Some(index) = self
+                .grouped
+                .iter()
+                .position(|project| project.client_name == client_name && project.project_name == project_name)
+            {
+                self.project_state.select(Some(index));
+            }
+        }
+
+        self.sync_entry_selection_for_project();
+
+        if let Some(entry_desc) = selected_entry_key {
+            if let Some(project) = self.current_project() {
+                if let Some(index) = project.entries.iter().position(|entry| entry.description == entry_desc) {
+                    self.entry_state.select(Some(index));
+                }
+            }
+        }
+
+        self.sync_entry_selection_for_project();
+    }
+
+    fn sync_settings_items_for_category(&mut self) {
+        self.settings_items = match self.settings_selected_category() {
+            "Integrations" => vec![SettingsItem::TogglToken],
+            _ => vec![
+                SettingsItem::TargetHours,
+                SettingsItem::TimeRoundingToggle,
+                SettingsItem::RoundingIncrement,
+                SettingsItem::RoundingMode,
+            ],
+        };
+        if !self.settings_items.is_empty() {
+            self.settings_item_state.select(Some(0));
+        } else {
+            self.settings_item_state.select(None);
+        }
+    }
+
+    fn begin_edit_selected_setting_item(&mut self) {
+        let Some(index) = self.settings_item_state.selected() else {
+            return;
+        };
+        let Some(item) = self.settings_items.get(index).copied() else {
+            return;
+        };
+
+        match item {
+            SettingsItem::TargetHours => {
+                self.settings_input = format!("{:.2}", self.target_hours);
+            }
+            SettingsItem::TogglToken => {
+                self.settings_input = self.token.clone().unwrap_or_default();
+            }
+            SettingsItem::TimeRoundingToggle => {
+                self.settings_rounding_draft_enabled = self.rounding.is_some();
+                self.settings_rounding_draft = self.rounding.unwrap_or_default();
+            }
+            SettingsItem::RoundingIncrement | SettingsItem::RoundingMode => {
+                let Some(rounding) = self.rounding else {
+                    self.status = Some("Enable time rounding first.".to_string());
+                    self.set_toast("Enable time rounding first.", true);
+                    return;
+                };
+                self.settings_rounding_draft_enabled = true;
+                self.settings_rounding_draft = rounding;
+            }
+        }
+
+        self.settings_edit_item = Some(item);
+        self.settings_focus = SettingsFocus::Edit;
+        self.status = None;
+    }
+
+    fn save_setting_item(&mut self, item: SettingsItem) {
+        match item {
+            SettingsItem::TargetHours => {
+                let parsed = match self.parse_target_hours() {
+                    Ok(value) => value,
+                    Err(message) => {
+                        self.status = Some(message);
+                        return;
+                    }
+                };
+                if let Err(err) = storage::write_target_hours(parsed) {
+                    self.status = Some(format!("Failed to save: {err}"));
+                    return;
+                }
+                self.target_hours = parsed;
+                self.settings_input = format!("{:.2}", parsed);
+                self.status = Some("Target hours updated.".to_string());
+                self.set_toast("Target hours saved.", false);
+                self.settings_edit_item = None;
+                self.settings_focus = SettingsFocus::Items;
+            }
+            SettingsItem::TogglToken => {
+                let token = self.settings_input.trim().to_string();
+                if token.is_empty() {
+                    self.status = Some("Token is required.".to_string());
+                    return;
+                }
+                if let Err(err) = storage::write_token(&token) {
+                    self.status = Some(format!("Failed to save token: {err}"));
+                    return;
+                }
+                self.token = Some(token.clone());
+                self.token_hash = Some(storage::hash_token(&token));
+                self.cache = self
+                    .token_hash
+                    .as_ref()
+                    .and_then(|hash| storage::read_cache().filter(|cache| cache.token_hash == *hash))
+                    .or_else(|| self.token_hash.clone().map(storage::new_cache));
+                self.status = Some("Toggl token updated.".to_string());
+                self.set_toast("Token updated.", false);
+                self.settings_edit_item = None;
+                self.settings_focus = SettingsFocus::Items;
+                self.mode = Mode::Loading;
+                self.refresh_intent = RefreshIntent::CacheOnly;
+                self.needs_refresh = true;
+            }
+            SettingsItem::TimeRoundingToggle => {
+                let next = if self.settings_rounding_draft_enabled {
+                    Some(self.settings_rounding_draft)
+                } else {
+                    None
+                };
+                if let Err(err) = storage::write_rounding(next) {
+                    self.status = Some(format!("Failed to save: {err}"));
+                    return;
+                }
+                self.rounding = next;
+                self.status = Some(if self.rounding.is_some() {
+                    "Time rounding enabled.".to_string()
+                } else {
+                    "Time rounding disabled.".to_string()
+                });
+                self.set_toast("Rounding saved.", false);
+                self.settings_edit_item = None;
+                self.settings_focus = SettingsFocus::Items;
+                self.rebuild_grouped();
+            }
+            SettingsItem::RoundingIncrement | SettingsItem::RoundingMode => {
+                if !self.settings_rounding_draft_enabled {
+                    self.status = Some("Enable time rounding first.".to_string());
+                    self.set_toast("Enable time rounding first.", true);
+                    self.settings_edit_item = None;
+                    self.settings_focus = SettingsFocus::Items;
+                    return;
+                }
+                let next = Some(self.settings_rounding_draft);
+                if let Err(err) = storage::write_rounding(next) {
+                    self.status = Some(format!("Failed to save: {err}"));
+                    return;
+                }
+                self.rounding = next;
+                self.status = Some("Time rounding updated.".to_string());
+                self.set_toast("Rounding saved.", false);
+                self.settings_edit_item = None;
+                self.settings_focus = SettingsFocus::Items;
+                self.rebuild_grouped();
+            }
+        }
+    }
+
+    fn cycle_rounding_increment(&mut self, up: bool) {
+        let values = [15u32, 30, 45, 60];
+        let current = self.settings_rounding_draft.increment_minutes;
+        let index = values.iter().position(|value| *value == current).unwrap_or(0);
+        let next_index = if up {
+            if index == 0 { values.len() - 1 } else { index - 1 }
+        } else {
+            if index + 1 >= values.len() { 0 } else { index + 1 }
+        };
+        self.settings_rounding_draft.increment_minutes = values[next_index];
+    }
+
+    fn cycle_rounding_mode(&mut self, up: bool) {
+        let values = [RoundingMode::Closest, RoundingMode::Up, RoundingMode::Down];
+        let current = self.settings_rounding_draft.mode;
+        let index = values.iter().position(|value| *value == current).unwrap_or(0);
+        let next_index = if up {
+            if index == 0 { values.len() - 1 } else { index - 1 }
+        } else {
+            if index + 1 >= values.len() { 0 } else { index + 1 }
+        };
+        self.settings_rounding_draft.mode = values[next_index];
+    }
+
+    fn select_previous_setting_item(&mut self) {
+        if self.settings_items.is_empty() {
+            return;
+        }
+        let selected = self.settings_item_state.selected().unwrap_or(0);
+        let new_index = if selected == 0 {
+            self.settings_items.len() - 1
+        } else {
+            selected - 1
+        };
+        self.settings_item_state.select(Some(new_index));
+    }
+
+    fn select_next_setting_item(&mut self) {
+        if self.settings_items.is_empty() {
+            return;
+        }
+        let selected = self.settings_item_state.selected().unwrap_or(0);
+        let new_index = if selected + 1 >= self.settings_items.len() {
+            0
+        } else {
+            selected + 1
+        };
+        self.settings_item_state.select(Some(new_index));
+    }
+
     fn select_previous_setting_category(&mut self) {
         if self.settings_categories.is_empty() {
             return;
@@ -690,7 +977,7 @@ impl App {
             selected - 1
         };
         self.settings_state.select(Some(new_index));
-        self.sync_settings_input_for_category();
+        self.sync_settings_items_for_category();
     }
 
     fn select_next_setting_category(&mut self) {
@@ -704,16 +991,7 @@ impl App {
             selected + 1
         };
         self.settings_state.select(Some(new_index));
-        self.sync_settings_input_for_category();
-    }
-
-    fn sync_settings_input_for_category(&mut self) {
-        let category = self.settings_selected_category();
-        if category == "General" {
-            self.settings_input = format!("{:.2}", self.target_hours);
-        } else if category == "Integrations" {
-            self.settings_input = self.token.clone().unwrap_or_default();
-        }
+        self.sync_settings_items_for_category();
     }
 
     pub fn settings_categories(&self) -> &[String] {
@@ -724,16 +1002,55 @@ impl App {
         &mut self.settings_state
     }
 
-    pub fn settings_is_editing(&self) -> bool {
-        matches!(self.settings_mode, SettingsMode::EditValue)
-    }
-
     pub fn settings_selected_category(&self) -> &str {
         self.settings_state
             .selected()
             .and_then(|index| self.settings_categories.get(index))
             .map(String::as_str)
             .unwrap_or("General")
+    }
+
+    pub fn settings_items(&self) -> &[SettingsItem] {
+        &self.settings_items
+    }
+
+    pub fn settings_item_state(&mut self) -> &mut ListState {
+        &mut self.settings_item_state
+    }
+
+    pub fn settings_focus(&self) -> SettingsFocus {
+        self.settings_focus
+    }
+
+    pub fn settings_edit_item(&self) -> Option<SettingsItem> {
+        self.settings_edit_item
+    }
+
+    pub fn settings_rounding_enabled_display(&self) -> bool {
+        if self.settings_focus == SettingsFocus::Edit
+            && self.settings_edit_item == Some(SettingsItem::TimeRoundingToggle)
+        {
+            return self.settings_rounding_draft_enabled;
+        }
+        self.rounding.is_some()
+    }
+
+    pub fn settings_rounding_config_display(&self) -> Option<RoundingConfig> {
+        if self.settings_focus == SettingsFocus::Edit
+            && matches!(
+                self.settings_edit_item,
+                Some(SettingsItem::TimeRoundingToggle)
+                    | Some(SettingsItem::RoundingIncrement)
+                    | Some(SettingsItem::RoundingMode)
+            )
+        {
+            return if self.settings_rounding_draft_enabled {
+                Some(self.settings_rounding_draft)
+            } else {
+                None
+            };
+        }
+        self.rounding
     }
 
     fn select_previous_project(&mut self) {

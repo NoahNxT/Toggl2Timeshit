@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
 use crate::models::{Project, TimeEntry};
+use crate::rounding::RoundingConfig;
+use crate::rounding::round_seconds;
 
 #[derive(Debug, Clone)]
 pub struct GroupedEntry {
@@ -21,6 +23,7 @@ pub fn group_entries(
     entries: &[TimeEntry],
     projects: &[Project],
     client_names: &HashMap<u64, String>,
+    rounding: Option<&RoundingConfig>,
 ) -> Vec<GroupedProject> {
     let mut project_info: HashMap<Option<u64>, (String, Option<String>)> = HashMap::new();
     for project in projects {
@@ -33,7 +36,6 @@ pub fn group_entries(
     project_info.insert(None, ("No Project".to_string(), None));
 
     let mut grouped: HashMap<Option<u64>, HashMap<String, i64>> = HashMap::new();
-    let mut totals: HashMap<Option<u64>, i64> = HashMap::new();
 
     for entry in entries {
         let project_key = entry.project_id;
@@ -43,7 +45,6 @@ pub fn group_entries(
             .unwrap_or_else(|| "No description".to_string());
         let project_entries = grouped.entry(project_key).or_default();
         *project_entries.entry(description).or_insert(0) += entry.duration;
-        *totals.entry(project_key).or_insert(0) += entry.duration;
     }
 
     let mut result: Vec<GroupedProject> = grouped
@@ -58,17 +59,22 @@ pub fn group_entries(
                 None => project_name.clone(),
             };
 
+            let mut total_seconds = 0i64;
             let mut entry_list: Vec<GroupedEntry> = entries
                 .into_iter()
-                .map(|(description, duration)| GroupedEntry {
-                    description,
-                    total_hours: duration as f64 / 3600.0,
+                .map(|(description, duration)| {
+                    let rounded_seconds = rounding
+                        .map(|cfg| round_seconds(duration, cfg))
+                        .unwrap_or(duration);
+                    total_seconds = total_seconds.saturating_add(rounded_seconds);
+                    GroupedEntry {
+                        description,
+                        total_hours: rounded_seconds as f64 / 3600.0,
+                    }
                 })
                 .collect();
 
             entry_list.sort_by(|a, b| b.total_hours.partial_cmp(&a.total_hours).unwrap());
-
-            let total_seconds = *totals.get(&project_id).unwrap_or(&0);
 
             GroupedProject {
                 project_name,
@@ -98,6 +104,7 @@ pub fn group_entries(
 mod tests {
     use super::*;
     use std::collections::HashMap;
+    use crate::rounding::{RoundingConfig, RoundingMode};
 
     #[test]
     fn groups_entries_by_project_and_description() {
@@ -143,7 +150,7 @@ mod tests {
             },
         ];
 
-        let grouped = group_entries(&entries, &projects, &HashMap::new());
+        let grouped = group_entries(&entries, &projects, &HashMap::new(), None);
         assert_eq!(grouped.len(), 2);
         let project_a = grouped
             .iter()
@@ -151,5 +158,49 @@ mod tests {
             .unwrap();
         assert_eq!(project_a.entries.len(), 1);
         assert!((project_a.total_hours - 1.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn rounds_each_grouped_entry_and_totals_are_sum_of_rounded_lines() {
+        let projects = vec![Project {
+            id: 1,
+            name: "Project A".to_string(),
+            client_id: None,
+            client_name: None,
+        }];
+
+        let entries = vec![
+            TimeEntry {
+                id: 1,
+                description: Some("Ticket 1".to_string()),
+                duration: 14 * 60,
+                start: "2026-02-03T00:00:00Z".to_string(),
+                stop: Some("2026-02-03T00:14:00Z".to_string()),
+                project_id: Some(1),
+            },
+            TimeEntry {
+                id: 2,
+                description: Some("Ticket 2".to_string()),
+                duration: 14 * 60,
+                start: "2026-02-03T01:00:00Z".to_string(),
+                stop: Some("2026-02-03T01:14:00Z".to_string()),
+                project_id: Some(1),
+            },
+        ];
+
+        let rounding = RoundingConfig {
+            increment_minutes: 15,
+            mode: RoundingMode::Closest,
+        };
+
+        let grouped = group_entries(&entries, &projects, &HashMap::new(), Some(&rounding));
+        assert_eq!(grouped.len(), 1);
+        let project_a = &grouped[0];
+
+        let ticket1 = project_a.entries.iter().find(|e| e.description == "Ticket 1").unwrap();
+        let ticket2 = project_a.entries.iter().find(|e| e.description == "Ticket 2").unwrap();
+        assert!((ticket1.total_hours - 0.25).abs() < 0.001);
+        assert!((ticket2.total_hours - 0.25).abs() < 0.001);
+        assert!((project_a.total_hours - 0.5).abs() < 0.001);
     }
 }
