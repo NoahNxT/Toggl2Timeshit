@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use crate::dates::{parse_date, DateRange};
-use crate::grouping::{group_entries, GroupedProject};
+use crate::grouping::{group_entries, GroupedEntry, GroupedProject};
 use crate::models::{Client as TogglClientModel, Project, TimeEntry, Workspace};
 use crate::storage::{
     self, CacheFile, CachedData, QuotaFile, ThemePreference,
@@ -24,6 +24,12 @@ pub enum Mode {
     DateInput(DateInputMode),
     Settings,
     Error,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DashboardFocus {
+    Projects,
+    Entries,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,6 +66,7 @@ pub struct App {
     pub should_quit: bool,
     pub needs_refresh: bool,
     pub mode: Mode,
+    pub dashboard_focus: DashboardFocus,
     pub status: Option<String>,
     pub input: String,
     pub token: Option<String>,
@@ -72,6 +79,7 @@ pub struct App {
     pub grouped: Vec<GroupedProject>,
     pub total_hours: f64,
     pub project_state: ListState,
+    pub entry_state: ListState,
     pub last_refresh: Option<DateTime<Local>>,
     pub show_help: bool,
     pub theme: ThemePreference,
@@ -116,6 +124,7 @@ impl App {
             should_quit: false,
             needs_refresh: token.is_some(),
             mode,
+            dashboard_focus: DashboardFocus::Projects,
             status: None,
             input: String::new(),
             token,
@@ -128,6 +137,7 @@ impl App {
             grouped: Vec::new(),
             total_hours: 0.0,
             project_state,
+            entry_state: ListState::default(),
             last_refresh: None,
             show_help: false,
             theme,
@@ -301,6 +311,7 @@ impl App {
                 .as_ref()
                 .and_then(|value| parse_cached_time(value))
         };
+        self.sync_entry_selection_for_project();
 
         if let Some(reason) = cache_reason {
             let message = self.cache_status_message(reason, cache_timestamp.as_deref());
@@ -363,8 +374,32 @@ impl App {
             KeyCode::Char('c') | KeyCode::Char('C') => self.copy_client_entries_to_clipboard(),
             KeyCode::Char('v') | KeyCode::Char('V') => self.copy_project_entries_to_clipboard(),
             KeyCode::Char('x') | KeyCode::Char('X') => self.copy_entries_to_clipboard(true),
-            KeyCode::Up => self.select_previous_project(),
-            KeyCode::Down => self.select_next_project(),
+            KeyCode::Right | KeyCode::Tab => self.enter_entries_focus(),
+            KeyCode::Left | KeyCode::BackTab if self.dashboard_focus == DashboardFocus::Entries => {
+                self.exit_entries_focus();
+            }
+            KeyCode::Enter if self.dashboard_focus == DashboardFocus::Projects => {
+                self.enter_entries_focus();
+            }
+            KeyCode::Char('b') | KeyCode::Char('B')
+                if self.dashboard_focus == DashboardFocus::Entries =>
+            {
+                self.copy_entry_title_to_clipboard();
+            }
+            KeyCode::Char('n') | KeyCode::Char('N')
+                if self.dashboard_focus == DashboardFocus::Entries =>
+            {
+                self.copy_entry_hours_to_clipboard();
+            }
+            KeyCode::Esc if self.dashboard_focus == DashboardFocus::Entries => self.exit_entries_focus(),
+            KeyCode::Up => match self.dashboard_focus {
+                DashboardFocus::Projects => self.select_previous_project(),
+                DashboardFocus::Entries => self.select_previous_entry(),
+            },
+            KeyCode::Down => match self.dashboard_focus {
+                DashboardFocus::Projects => self.select_next_project(),
+                DashboardFocus::Entries => self.select_next_entry(),
+            },
             _ => {}
         }
     }
@@ -712,6 +747,8 @@ impl App {
             selected - 1
         };
         self.project_state.select(Some(new_index));
+        self.entry_state.select(Some(0));
+        self.sync_entry_selection_for_project();
     }
 
     fn select_next_project(&mut self) {
@@ -725,6 +762,8 @@ impl App {
             selected + 1
         };
         self.project_state.select(Some(new_index));
+        self.entry_state.select(Some(0));
+        self.sync_entry_selection_for_project();
     }
 
     fn select_previous_workspace(&mut self) {
@@ -757,6 +796,102 @@ impl App {
         self.project_state
             .selected()
             .and_then(|index| self.grouped.get(index))
+    }
+
+    pub fn current_entry(&self) -> Option<&GroupedEntry> {
+        let project = self.current_project()?;
+        let selected = self.entry_state.selected()?;
+        project.entries.get(selected)
+    }
+
+    fn sync_entry_selection_for_project(&mut self) {
+        let Some(project) = self.current_project() else {
+            self.entry_state.select(None);
+            if self.dashboard_focus == DashboardFocus::Entries {
+                self.dashboard_focus = DashboardFocus::Projects;
+            }
+            return;
+        };
+
+        if project.entries.is_empty() {
+            self.entry_state.select(None);
+            return;
+        }
+
+        let selected = self.entry_state.selected().unwrap_or(0);
+        let selected = selected.min(project.entries.len().saturating_sub(1));
+        self.entry_state.select(Some(selected));
+    }
+
+    fn enter_entries_focus(&mut self) {
+        self.dashboard_focus = DashboardFocus::Entries;
+        self.sync_entry_selection_for_project();
+    }
+
+    fn exit_entries_focus(&mut self) {
+        self.dashboard_focus = DashboardFocus::Projects;
+    }
+
+    fn select_previous_entry(&mut self) {
+        let Some(project) = self.current_project() else {
+            return;
+        };
+        if project.entries.is_empty() {
+            self.entry_state.select(None);
+            return;
+        }
+
+        let selected = self.entry_state.selected().unwrap_or(0);
+        let new_index = if selected == 0 {
+            project.entries.len() - 1
+        } else {
+            selected - 1
+        };
+        self.entry_state.select(Some(new_index));
+    }
+
+    fn select_next_entry(&mut self) {
+        let Some(project) = self.current_project() else {
+            return;
+        };
+        if project.entries.is_empty() {
+            self.entry_state.select(None);
+            return;
+        }
+
+        let selected = self.entry_state.selected().unwrap_or(0);
+        let new_index = if selected + 1 >= project.entries.len() {
+            0
+        } else {
+            selected + 1
+        };
+        self.entry_state.select(Some(new_index));
+    }
+
+    fn copy_entry_title_to_clipboard(&mut self) {
+        let selected = match self.current_entry() {
+            Some(entry) => entry,
+            None => {
+                self.status = Some("Select an entry first.".to_string());
+                self.set_toast("Select an entry first.", true);
+                return;
+            }
+        };
+
+        self.write_clipboard(selected.description.clone(), "Copied entry title.");
+    }
+
+    fn copy_entry_hours_to_clipboard(&mut self) {
+        let selected = match self.current_entry() {
+            Some(entry) => entry,
+            None => {
+                self.status = Some("Select an entry first.".to_string());
+                self.set_toast("Select an entry first.", true);
+                return;
+            }
+        };
+
+        self.write_clipboard(format!("{:.2}", selected.total_hours), "Copied entry hours.");
     }
 
     fn copy_entries_to_clipboard(&mut self, include_project: bool) {

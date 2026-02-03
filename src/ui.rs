@@ -6,7 +6,7 @@ use ratatui::widgets::{
 };
 use ratatui::Frame;
 
-use crate::app::{App, DateInputMode, Mode};
+use crate::app::{App, DashboardFocus, DateInputMode, Mode};
 use crate::storage::ThemePreference;
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
@@ -83,19 +83,36 @@ fn draw_dashboard(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
         })
         .collect();
 
+    let active_highlight = Style::default()
+        .bg(theme.accent)
+        .fg(theme.accent_contrast())
+        .add_modifier(Modifier::BOLD);
+    let inactive_highlight = Style::default()
+        .fg(theme.highlight)
+        .add_modifier(Modifier::BOLD);
+
+    let (project_highlight_style, project_highlight_symbol) = match app.dashboard_focus {
+        DashboardFocus::Projects => (active_highlight, "▍ "),
+        DashboardFocus::Entries => (inactive_highlight, "▏ "),
+    };
+
+    let (entry_highlight_style, entry_highlight_symbol) = match app.dashboard_focus {
+        DashboardFocus::Entries => (active_highlight, "▍ "),
+        DashboardFocus::Projects => (inactive_highlight, "▏ "),
+    };
+
     let project_list = List::new(project_items)
         .block(panel_block("Projects", theme))
-        .highlight_style(
-            Style::default()
-                .bg(theme.accent)
-                .fg(theme.accent_contrast())
-                .add_modifier(Modifier::BOLD),
-        )
-        .highlight_symbol("▍ ");
+        .highlight_style(project_highlight_style)
+        .highlight_symbol(project_highlight_symbol);
 
     frame.render_stateful_widget(project_list, body[0], &mut app.project_state);
 
-    let entry_items: Vec<ListItem> = if let Some(project) = app.current_project() {
+    let current_project = app
+        .project_state
+        .selected()
+        .and_then(|index| app.grouped.get(index));
+    let entry_items: Vec<ListItem> = if let Some(project) = current_project {
         project
             .entries
             .iter()
@@ -114,9 +131,12 @@ fn draw_dashboard(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
         vec![ListItem::new(Line::from("No entries")).style(theme.panel_style())]
     };
 
-    let entries_block = List::new(entry_items).block(panel_block("Entries", theme));
+    let entries_list = List::new(entry_items)
+        .block(panel_block("Entries", theme))
+        .highlight_style(entry_highlight_style)
+        .highlight_symbol(entry_highlight_symbol);
 
-    frame.render_widget(entries_block, body[1]);
+    frame.render_stateful_widget(entries_list, body[1], &mut app.entry_state);
 
     let footer = footer_line(app, theme);
     let footer_block = Paragraph::new(footer)
@@ -341,6 +361,39 @@ fn draw_help(frame: &mut Frame, area: Rect, theme: &Theme) {
         Row::new(vec![
             Cell::from(Span::styled("Up/Down", key_style)),
             Cell::from("Select project"),
+        ]),
+        Row::new(vec![
+            Cell::from(Span::styled("Right / Tab", key_style)),
+            Cell::from("Switch to entries"),
+        ]),
+        Row::new(vec![
+            Cell::from(Span::styled("Left / Shift+Tab", key_style)),
+            Cell::from("Switch to projects"),
+        ]),
+        Row::new(vec![
+            Cell::from(Span::styled("Enter", key_style)),
+            Cell::from("Browse entries"),
+        ]),
+        Row::new(vec![
+            Cell::from(Span::styled("Esc", key_style)),
+            Cell::from("Back to projects"),
+        ]),
+        Row::new(vec![Cell::from(""), Cell::from("")]),
+        Row::new(vec![
+            Cell::from(Span::styled("Entries", header_style)),
+            Cell::from(""),
+        ]),
+        Row::new(vec![
+            Cell::from(Span::styled("Up/Down", key_style)),
+            Cell::from("Select entry"),
+        ]),
+        Row::new(vec![
+            Cell::from(Span::styled("b", key_style)),
+            Cell::from("Copy entry title"),
+        ]),
+        Row::new(vec![
+            Cell::from(Span::styled("n", key_style)),
+            Cell::from("Copy entry hours"),
         ]),
         Row::new(vec![Cell::from(""), Cell::from("")]),
         Row::new(vec![

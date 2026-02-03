@@ -2,9 +2,16 @@
 
 ## Navigation
 - `Up/Down`: Select project
-- `Enter`: Select workspace (workspace picker)
-- `Esc`: Close modal / go back
+- `Enter`: Browse entries (dashboard) / Select workspace (workspace picker)
+- `Right` / `Tab`: Switch to entries (dashboard)
+- `Left` / `Shift+Tab`: Switch to projects (dashboard)
+- `Esc`: Back to projects (from entries) / Close modal
 - `q`: Quit
+
+## Entries (Dashboard)
+- `Up/Down`: Select entry (when browsing entries)
+- `b`: Copy selected entry title
+- `n`: Copy selected entry hours
 
 ## Dates
 - `t`: Today

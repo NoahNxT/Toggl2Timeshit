@@ -52,9 +52,15 @@ Full documentation is available via GitHub Pages (see `docs/`).
 - `c` copy client entries to clipboard
 - `v` copy project entries to clipboard
 - `x` copy all entries with project and client names to clipboard
+- `Enter` browse entries (dashboard)
+- `b` copy selected entry title (when browsing entries)
+- `n` copy selected entry hours (when browsing entries)
+- `Right`/`Tab` switch to entries (dashboard)
+- `Left`/`Shift+Tab` switch to projects (dashboard)
+- `Esc` back to projects (when browsing entries)
 - `d` set date range
 - `y` yesterday
-- Arrow keys to navigate projects
+- Arrow keys to navigate projects and entries
 
 ## License
 MIT
