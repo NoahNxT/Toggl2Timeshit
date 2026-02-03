@@ -1,7 +1,9 @@
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
+use ratatui::widgets::{
+    Block, Borders, Cell, Clear, List, ListItem, Paragraph, Row, Table, Wrap,
+};
 use ratatui::Frame;
 
 use crate::app::{App, DateInputMode, Mode};
@@ -126,10 +128,7 @@ fn footer_line(app: &App) -> Line<'static> {
     Line::from(vec![
         Span::styled(format!("Total: {:.2}h", app.total_hours), total_style),
         Span::raw("  "),
-        Span::styled(
-            "h help • Enter copy • p copy+project",
-            Style::default().fg(Color::Gray),
-        ),
+        Span::styled("h help", Style::default().fg(Color::Gray)),
         if status.is_empty() {
             Span::raw("")
         } else {
@@ -269,30 +268,80 @@ fn draw_help(frame: &mut Frame, area: Rect) {
     let block = centered_rect(70, 70, area);
     frame.render_widget(Clear, block);
 
-    let lines = vec![
-        Line::from(Span::styled("Navigation", Style::default().add_modifier(Modifier::BOLD))),
-        Line::from("Up/Down: Select project"),
-        Line::from(""),
-        Line::from(Span::styled("Dates", Style::default().add_modifier(Modifier::BOLD))),
-        Line::from("t: Today"),
-        Line::from("d: Set single date"),
-        Line::from("s: Set start date"),
-        Line::from("e: Set end date"),
-        Line::from(""),
-        Line::from(Span::styled("Clipboard", Style::default().add_modifier(Modifier::BOLD))),
-        Line::from("Enter: Copy entries"),
-        Line::from("Shift+Enter: Copy with project names (if supported)"),
-        Line::from("p: Copy with project names"),
-        Line::from(""),
-        Line::from(Span::styled("General", Style::default().add_modifier(Modifier::BOLD))),
-        Line::from("r: Refresh"),
-        Line::from("h or Esc: Close help"),
-        Line::from("q: Quit"),
+    let header_style = Style::default()
+        .add_modifier(Modifier::BOLD)
+        .fg(Color::Cyan);
+    let key_style = Style::default().fg(Color::Yellow);
+
+    let rows = vec![
+        Row::new(vec![
+            Cell::from(Span::styled("Navigation", header_style)),
+            Cell::from(""),
+        ]),
+        Row::new(vec![
+            Cell::from(Span::styled("Up/Down", key_style)),
+            Cell::from("Select project"),
+        ]),
+        Row::new(vec![Cell::from(""), Cell::from("")]),
+        Row::new(vec![
+            Cell::from(Span::styled("Dates", header_style)),
+            Cell::from(""),
+        ]),
+        Row::new(vec![
+            Cell::from(Span::styled("t", key_style)),
+            Cell::from("Today"),
+        ]),
+        Row::new(vec![
+            Cell::from(Span::styled("d", key_style)),
+            Cell::from("Set single date"),
+        ]),
+        Row::new(vec![
+            Cell::from(Span::styled("s", key_style)),
+            Cell::from("Set start date"),
+        ]),
+        Row::new(vec![
+            Cell::from(Span::styled("e", key_style)),
+            Cell::from("Set end date"),
+        ]),
+        Row::new(vec![Cell::from(""), Cell::from("")]),
+        Row::new(vec![
+            Cell::from(Span::styled("Clipboard", header_style)),
+            Cell::from(""),
+        ]),
+        Row::new(vec![
+            Cell::from(Span::styled("Enter", key_style)),
+            Cell::from("Copy entries"),
+        ]),
+        Row::new(vec![
+            Cell::from(Span::styled("Shift+Enter", key_style)),
+            Cell::from("Copy with project names (if supported)"),
+        ]),
+        Row::new(vec![
+            Cell::from(Span::styled("p", key_style)),
+            Cell::from("Copy with project names"),
+        ]),
+        Row::new(vec![Cell::from(""), Cell::from("")]),
+        Row::new(vec![
+            Cell::from(Span::styled("General", header_style)),
+            Cell::from(""),
+        ]),
+        Row::new(vec![
+            Cell::from(Span::styled("r", key_style)),
+            Cell::from("Refresh"),
+        ]),
+        Row::new(vec![
+            Cell::from(Span::styled("h / Esc", key_style)),
+            Cell::from("Close help"),
+        ]),
+        Row::new(vec![
+            Cell::from(Span::styled("q", key_style)),
+            Cell::from("Quit"),
+        ]),
     ];
 
-    let paragraph = Paragraph::new(lines)
-        .alignment(Alignment::Left)
+    let table = Table::new(rows, [Constraint::Length(20), Constraint::Min(10)])
         .block(Block::default().borders(Borders::ALL).title("Help"))
-        .wrap(Wrap { trim: true });
-    frame.render_widget(paragraph, block);
+        .column_spacing(2);
+
+    frame.render_widget(table, block);
 }
