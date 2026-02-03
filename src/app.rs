@@ -320,9 +320,9 @@ impl App {
             KeyCode::Char('q') => self.should_quit = true,
             KeyCode::Char('r') => self.trigger_refresh(),
             KeyCode::Char('t') => {
-                self.date_range = DateRange::today();
-                self.trigger_refresh();
+                self.set_date_range(DateRange::today());
             }
+            KeyCode::Char('y') => self.set_date_range(DateRange::yesterday()),
             KeyCode::Char('h') => self.show_help = true,
             KeyCode::Char('m') | KeyCode::Char('M') => self.toggle_theme(),
             KeyCode::Char('d') => self.enter_date_input(DateInputMode::Range),
@@ -455,6 +455,13 @@ impl App {
     fn trigger_refresh(&mut self) {
         self.mode = Mode::Loading;
         self.refresh_intent = RefreshIntent::ForceApi;
+        self.needs_refresh = true;
+    }
+
+    fn set_date_range(&mut self, range: DateRange) {
+        self.date_range = range;
+        self.mode = Mode::Loading;
+        self.refresh_intent = RefreshIntent::CacheOnly;
         self.needs_refresh = true;
     }
 

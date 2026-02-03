@@ -1,4 +1,5 @@
 use chrono::{Datelike, DateTime, Local, NaiveDate, TimeZone};
+use chrono::Duration;
 
 #[derive(Debug, Clone)]
 pub struct DateRange {
@@ -13,6 +14,14 @@ impl DateRange {
         let start = local_datetime(today, 0, 0, 0);
         let end = local_datetime(today, 23, 59, 59);
         let label = format!("Today ({})", today.format("%Y-%m-%d"));
+        Self { start, end, label }
+    }
+
+    pub fn yesterday() -> Self {
+        let day = Local::now().date_naive() - Duration::days(1);
+        let start = local_datetime(day, 0, 0, 0);
+        let end = local_datetime(day, 23, 59, 59);
+        let label = format!("Yesterday ({})", day.format("%Y-%m-%d"));
         Self { start, end, label }
     }
 
@@ -120,5 +129,11 @@ mod tests {
         let range = DateRange::from_bounds(start, end);
         assert!(range.label().contains("2026-01-01"));
         assert!(range.label().contains("2026-01-10"));
+    }
+
+    #[test]
+    fn yesterday_label() {
+        let range = DateRange::yesterday();
+        assert!(range.label().starts_with("Yesterday"));
     }
 }

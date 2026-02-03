@@ -349,6 +349,10 @@ fn draw_help(frame: &mut Frame, area: Rect, theme: &Theme) {
             Cell::from("Today"),
         ]),
         Row::new(vec![
+            Cell::from(Span::styled("y", key_style)),
+            Cell::from("Yesterday"),
+        ]),
+        Row::new(vec![
             Cell::from(Span::styled("d", key_style)),
             Cell::from("Set date range"),
         ]),
