@@ -44,6 +44,7 @@ pub struct App {
     pub total_hours: f64,
     pub project_state: ListState,
     pub last_refresh: Option<DateTime<Local>>,
+    pub show_help: bool,
     toast: Option<Toast>,
 }
 
@@ -81,6 +82,7 @@ impl App {
             total_hours: 0.0,
             project_state,
             last_refresh: None,
+            show_help: false,
             toast: None,
         }
     }
@@ -204,6 +206,17 @@ impl App {
     }
 
     fn handle_dashboard_input(&mut self, key: KeyEvent) {
+        if self.show_help {
+            match key.code {
+                KeyCode::Char('h') | KeyCode::Esc => {
+                    self.show_help = false;
+                }
+                KeyCode::Char('q') => self.should_quit = true,
+                _ => {}
+            }
+            return;
+        }
+
         match key.code {
             KeyCode::Char('q') => self.should_quit = true,
             KeyCode::Char('r') => self.trigger_refresh(),
@@ -211,6 +224,7 @@ impl App {
                 self.date_range = DateRange::today();
                 self.trigger_refresh();
             }
+            KeyCode::Char('h') => self.show_help = true,
             KeyCode::Char('d') => self.enter_date_input(DateInputMode::Single),
             KeyCode::Char('s') => self.enter_date_input(DateInputMode::Start),
             KeyCode::Char('e') => self.enter_date_input(DateInputMode::End),

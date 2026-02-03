@@ -24,6 +24,10 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             draw_toast(frame, size, &toast.message, toast.is_error);
         }
     }
+
+    if app.show_help {
+        draw_help(frame, size);
+    }
 }
 
 fn draw_dashboard(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -123,7 +127,7 @@ fn footer_line(app: &App) -> Line<'static> {
         Span::styled(format!("Total: {:.2}h", app.total_hours), total_style),
         Span::raw("  "),
         Span::styled(
-            "q quit • r refresh • d date • s start • e end • t today • Enter copy • p copy+project",
+            "h help • Enter copy • p copy+project",
             Style::default().fg(Color::Gray),
         ),
         if status.is_empty() {
@@ -259,4 +263,36 @@ fn draw_toast(frame: &mut Frame, area: Rect, message: &str, is_error: bool) {
         .alignment(Alignment::Center)
         .block(Block::default().borders(Borders::ALL).title("Copied"));
     frame.render_widget(paragraph, rect);
+}
+
+fn draw_help(frame: &mut Frame, area: Rect) {
+    let block = centered_rect(70, 70, area);
+    frame.render_widget(Clear, block);
+
+    let lines = vec![
+        Line::from(Span::styled("Navigation", Style::default().add_modifier(Modifier::BOLD))),
+        Line::from("Up/Down: Select project"),
+        Line::from(""),
+        Line::from(Span::styled("Dates", Style::default().add_modifier(Modifier::BOLD))),
+        Line::from("t: Today"),
+        Line::from("d: Set single date"),
+        Line::from("s: Set start date"),
+        Line::from("e: Set end date"),
+        Line::from(""),
+        Line::from(Span::styled("Clipboard", Style::default().add_modifier(Modifier::BOLD))),
+        Line::from("Enter: Copy entries"),
+        Line::from("Shift+Enter: Copy with project names (if supported)"),
+        Line::from("p: Copy with project names"),
+        Line::from(""),
+        Line::from(Span::styled("General", Style::default().add_modifier(Modifier::BOLD))),
+        Line::from("r: Refresh"),
+        Line::from("h or Esc: Close help"),
+        Line::from("q: Quit"),
+    ];
+
+    let paragraph = Paragraph::new(lines)
+        .alignment(Alignment::Left)
+        .block(Block::default().borders(Borders::ALL).title("Help"))
+        .wrap(Wrap { trim: true });
+    frame.render_widget(paragraph, block);
 }
