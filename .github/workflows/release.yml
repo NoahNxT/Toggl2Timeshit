@@ -11,48 +11,28 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        include:
-          - os: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
-            artifact: linux-x86_64
-          - os: ubuntu-22.04
-            target: aarch64-unknown-linux-gnu
-            artifact: linux-arm64
-          - os: macos-14
-            target: aarch64-apple-darwin
-            artifact: macos-arm64
-          - os: macos-14-large
-            target: x86_64-apple-darwin
-            artifact: macos-x86_64
-          - os: windows-2022
-            target: x86_64-pc-windows-msvc
-            artifact: windows-x86_64
+        os: [ubuntu-22.04, macos-14, windows-2022]
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-      - name: Install Linux ARM64 toolchain
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
       - name: Build release
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release
       - name: Package binary
         shell: bash
         run: |
           mkdir -p dist
-          if [[ "${{ matrix.target }}" == *"windows"* ]]; then
-            cp target/${{ matrix.target }}/release/timeshit.exe dist/
-            tar -czf dist/timeshit-${{ matrix.artifact }}.tar.gz -C dist timeshit.exe
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            cp target/release/timeshit.exe dist/
+            tar -czf dist/timeshit-Windows.tar.gz -C dist timeshit.exe
           else
-            cp target/${{ matrix.target }}/release/timeshit dist/
-            tar -czf dist/timeshit-${{ matrix.artifact }}.tar.gz -C dist timeshit
+            cp target/release/timeshit dist/
+            tar -czf dist/timeshit-${RUNNER_OS}.tar.gz -C dist timeshit
           fi
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: timeshit-${{ matrix.artifact }}
+          name: timeshit-${{ runner.os }}
           path: dist/*
 
   release:
