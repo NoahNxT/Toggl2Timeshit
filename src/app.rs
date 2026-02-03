@@ -140,7 +140,7 @@ impl App {
             date_end_input: String::new(),
             date_active_field: DateField::Start,
             settings_input: String::new(),
-            settings_categories: vec!["General".to_string()],
+            settings_categories: vec!["General".to_string(), "Integrations".to_string()],
             settings_state: {
                 let mut state = ListState::default();
                 state.select(Some(0));
@@ -532,42 +532,74 @@ impl App {
     }
 
     fn handle_settings_value_input(&mut self, key: KeyEvent) {
+        let category = self.settings_selected_category().to_string();
         match key.code {
             KeyCode::Char('q') => self.should_quit = true,
             KeyCode::Enter => {
-                let parsed = match self.parse_target_hours() {
-                    Ok(value) => value,
-                    Err(message) => {
-                        self.status = Some(message);
+                if category == "Integrations" {
+                    let token = self.settings_input.trim().to_string();
+                    if token.is_empty() {
+                        self.status = Some("Token is required.".to_string());
                         return;
                     }
-                };
-                if let Err(err) = storage::write_target_hours(parsed) {
-                    self.status = Some(format!("Failed to save: {err}"));
-                    return;
+                    if let Err(err) = storage::write_token(&token) {
+                        self.status = Some(format!("Failed to save token: {err}"));
+                        return;
+                    }
+                    self.token = Some(token.clone());
+                    self.token_hash = Some(storage::hash_token(&token));
+                    self.cache = self
+                        .token_hash
+                        .as_ref()
+                        .and_then(|hash| storage::read_cache().filter(|cache| cache.token_hash == *hash))
+                        .or_else(|| self.token_hash.clone().map(storage::new_cache));
+                    self.status = Some("Toggl token updated.".to_string());
+                    self.set_toast("Token updated.", false);
+                    self.settings_mode = SettingsMode::SelectCategory;
+                    self.mode = Mode::Loading;
+                    self.refresh_intent = RefreshIntent::CacheOnly;
+                    self.needs_refresh = true;
+                } else {
+                    let parsed = match self.parse_target_hours() {
+                        Ok(value) => value,
+                        Err(message) => {
+                            self.status = Some(message);
+                            return;
+                        }
+                    };
+                    if let Err(err) = storage::write_target_hours(parsed) {
+                        self.status = Some(format!("Failed to save: {err}"));
+                        return;
+                    }
+                    self.target_hours = parsed;
+                    self.settings_input = format!("{:.2}", parsed);
+                    self.status = Some("Target hours updated.".to_string());
+                    self.set_toast("Target hours saved.", false);
+                    self.settings_mode = SettingsMode::SelectCategory;
                 }
-                self.target_hours = parsed;
-                self.settings_input = format!("{:.2}", parsed);
-                self.status = Some("Target hours updated.".to_string());
-                self.set_toast("Target hours saved.", false);
-                self.settings_mode = SettingsMode::SelectCategory;
             }
             KeyCode::Backspace => {
                 self.settings_input.pop();
             }
             KeyCode::Char(ch) => {
-                if ch.is_ascii_digit() {
-                    self.settings_input.push(ch);
-                    return;
-                }
-                if ch == '.' || ch == ',' {
-                    if self.settings_input.is_empty() {
+                if category == "Integrations" {
+                    if !ch.is_control() {
+                        self.settings_input.push(ch);
+                    }
+                } else {
+                    if ch.is_ascii_digit() {
+                        self.settings_input.push(ch);
                         return;
                     }
-                    if self.settings_input.contains('.') || self.settings_input.contains(',') {
-                        return;
+                    if ch == '.' || ch == ',' {
+                        if self.settings_input.is_empty() {
+                            return;
+                        }
+                        if self.settings_input.contains('.') || self.settings_input.contains(',') {
+                            return;
+                        }
+                        self.settings_input.push(ch);
                     }
-                    self.settings_input.push(ch);
                 }
             }
             KeyCode::Esc => {
@@ -644,6 +676,8 @@ impl App {
         let category = self.settings_selected_category();
         if category == "General" {
             self.settings_input = format!("{:.2}", self.target_hours);
+        } else if category == "Integrations" {
+            self.settings_input = self.token.clone().unwrap_or_default();
         }
     }
 

@@ -451,21 +451,39 @@ fn draw_settings(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
         "Enter to edit • Esc close"
     };
 
+    let is_integrations = selected_category == "Integrations";
+    let token_display = app
+        .token
+        .as_deref()
+        .map(mask_token)
+        .unwrap_or_else(|| "Not set".to_string());
+
     let mut lines = vec![
         Line::from(Span::styled(
             selected_category,
             Style::default().add_modifier(Modifier::BOLD).fg(theme.accent),
         )),
         Line::from(""),
-        Line::from(vec![
-            Span::styled("Target hours: ", Style::default().add_modifier(Modifier::BOLD)),
-            if is_editing {
-                Span::styled(settings_input, Style::default().fg(theme.accent))
-            } else {
-                Span::raw(settings_input)
-            },
-            Span::raw(" h"),
-        ]),
+        if is_integrations {
+            Line::from(vec![
+                Span::styled("Toggl token: ", Style::default().add_modifier(Modifier::BOLD)),
+                if is_editing {
+                    Span::styled(settings_input, Style::default().fg(theme.accent))
+                } else {
+                    Span::raw(token_display)
+                },
+            ])
+        } else {
+            Line::from(vec![
+                Span::styled("Target hours: ", Style::default().add_modifier(Modifier::BOLD)),
+                if is_editing {
+                    Span::styled(settings_input, Style::default().fg(theme.accent))
+                } else {
+                    Span::raw(settings_input)
+                },
+                Span::raw(" h"),
+            ])
+        },
         Line::from(""),
         Line::from(hint),
     ];
@@ -511,6 +529,18 @@ fn is_success_status(status: &str) -> bool {
         || lower.contains("success")
         || lower.contains("copied")
         || lower.contains("set to")
+}
+
+fn mask_token(token: &str) -> String {
+    if token.is_empty() {
+        return "Not set".to_string();
+    }
+    let len = token.chars().count();
+    if len <= 4 {
+        return "••••".to_string();
+    }
+    let tail: String = token.chars().skip(len - 4).collect();
+    format!("••••{tail}")
 }
 
 #[derive(Clone, Copy)]
