@@ -1,8 +1,8 @@
-use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
+use ratatui::layout::{Alignment, Constraint, Direction, Layout, Margin, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Block, Borders, Cell, Clear, List, ListItem, Paragraph, Row, Table, Wrap,
+    Block, BorderType, Borders, Cell, Clear, List, ListItem, Paragraph, Row, Table, Wrap,
 };
 use ratatui::Frame;
 
@@ -10,6 +10,7 @@ use crate::app::{App, DateInputMode, Mode};
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let size = frame.size();
+    draw_background(frame, size);
     draw_dashboard(frame, app, size);
 
     match app.mode {
@@ -33,15 +34,25 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 }
 
 fn draw_dashboard(frame: &mut Frame, app: &mut App, area: Rect) {
+    let content = area.inner(&Margin {
+        vertical: 1,
+        horizontal: 2,
+    });
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(3)])
-        .split(area);
+        .constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(2)])
+        .split(content);
 
     let header = header_line(app);
     let header_block = Paragraph::new(header)
         .alignment(Alignment::Left)
-        .block(Block::default().borders(Borders::ALL).title("Timeshit TUI"));
+        .block(
+            Block::default()
+                .borders(Borders::BOTTOM)
+                .border_style(border_style())
+                .style(panel_style()),
+        );
     frame.render_widget(header_block, chunks[0]);
 
     let body = Layout::default()
@@ -55,16 +66,24 @@ fn draw_dashboard(frame: &mut Frame, app: &mut App, area: Rect) {
         .map(|group| {
             let line = Line::from(vec![
                 Span::styled(&group.name, Style::default().add_modifier(Modifier::BOLD)),
-                Span::raw(format!("  {:.2}h", group.total_hours)),
+                Span::styled(
+                    format!("  {:.2}h", group.total_hours),
+                    muted_style(),
+                ),
             ]);
-            ListItem::new(line)
+            ListItem::new(line).style(panel_style())
         })
         .collect();
 
     let project_list = List::new(project_items)
-        .block(Block::default().borders(Borders::ALL).title("Projects"))
-        .highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
-        .highlight_symbol("➤ ");
+        .block(panel_block("Projects"))
+        .highlight_style(
+            Style::default()
+                .bg(ACCENT)
+                .fg(Color::Black)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("▍ ");
 
     frame.render_stateful_widget(project_list, body[0], &mut app.project_state);
 
@@ -75,23 +94,31 @@ fn draw_dashboard(frame: &mut Frame, app: &mut App, area: Rect) {
             .map(|entry| {
                 ListItem::new(Line::from(vec![
                     Span::raw(&entry.description),
-                    Span::raw(format!("  {:.2}h", entry.total_hours)),
+                    Span::styled(
+                        format!("  {:.2}h", entry.total_hours),
+                        muted_style(),
+                    ),
                 ]))
+                .style(panel_style())
             })
             .collect()
     } else {
-        vec![ListItem::new(Line::from("No entries"))]
+        vec![ListItem::new(Line::from("No entries")).style(panel_style())]
     };
 
-    let entries_block = List::new(entry_items)
-        .block(Block::default().borders(Borders::ALL).title("Entries"));
+    let entries_block = List::new(entry_items).block(panel_block("Entries"));
 
     frame.render_widget(entries_block, body[1]);
 
     let footer = footer_line(app);
     let footer_block = Paragraph::new(footer)
         .alignment(Alignment::Left)
-        .block(Block::default().borders(Borders::ALL));
+        .block(
+            Block::default()
+                .borders(Borders::TOP)
+                .border_style(border_style())
+                .style(panel_style()),
+        );
     frame.render_widget(footer_block, chunks[2]);
 }
 
@@ -106,33 +133,40 @@ fn header_line(app: &App) -> Line<'static> {
         .map(|dt| dt.format("%H:%M:%S").to_string())
         .unwrap_or_else(|| "Never".to_string());
     Line::from(vec![
-        Span::styled("Workspace: ", Style::default().fg(Color::Gray)),
+        Span::styled("Timeshit", title_style()),
+        Span::raw("  "),
+        Span::styled("Workspace", muted_style()),
+        Span::raw(": "),
         Span::styled(workspace, Style::default().add_modifier(Modifier::BOLD)),
         Span::raw("  "),
-        Span::styled("Date: ", Style::default().fg(Color::Gray)),
+        Span::styled("Date", muted_style()),
+        Span::raw(": "),
         Span::raw(app.date_range.label().to_string()),
         Span::raw("  "),
-        Span::styled("Last refresh: ", Style::default().fg(Color::Gray)),
+        Span::styled("Last refresh", muted_style()),
+        Span::raw(": "),
         Span::raw(last_refresh),
     ])
 }
 
 fn footer_line(app: &App) -> Line<'static> {
     let total_style = if app.total_hours < 8.0 {
-        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
+        Style::default().fg(ERROR).add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+        Style::default().fg(SUCCESS).add_modifier(Modifier::BOLD)
     };
 
     let status = app.status.clone().unwrap_or_default();
     Line::from(vec![
-        Span::styled(format!("Total: {:.2}h", app.total_hours), total_style),
-        Span::raw("  "),
-        Span::styled("h help • q quit", Style::default().fg(Color::Gray)),
+        Span::styled(format!("Total {:.2}h", app.total_hours), total_style),
+        Span::raw("   "),
+        Span::styled("h help", muted_style()),
+        Span::raw(" · "),
+        Span::styled("q quit", muted_style()),
         if status.is_empty() {
             Span::raw("")
         } else {
-            Span::raw(format!("  |  {}", status))
+            Span::raw(format!("   |   {}", status))
         },
     ])
 }
@@ -142,7 +176,7 @@ fn draw_overlay(frame: &mut Frame, area: Rect, message: &str) {
     frame.render_widget(Clear, block);
     let paragraph = Paragraph::new(message)
         .alignment(Alignment::Center)
-        .block(Block::default().borders(Borders::ALL).title("Status"))
+        .block(panel_block("Status"))
         .wrap(Wrap { trim: true });
     frame.render_widget(paragraph, block);
 }
@@ -169,7 +203,7 @@ fn draw_login(frame: &mut Frame, app: &App, area: Rect) {
 
     let paragraph = Paragraph::new(lines)
         .alignment(Alignment::Left)
-        .block(Block::default().borders(Borders::ALL).title("Login"))
+        .block(panel_block("Login"))
         .wrap(Wrap { trim: true });
     frame.render_widget(paragraph, block);
 }
@@ -185,9 +219,14 @@ fn draw_workspace_select(frame: &mut Frame, app: &mut App, area: Rect) {
         .collect();
 
     let list = List::new(items)
-        .block(Block::default().borders(Borders::ALL).title("Select Workspace"))
-        .highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
-        .highlight_symbol("➤ ");
+        .block(panel_block("Select Workspace"))
+        .highlight_style(
+            Style::default()
+                .bg(ACCENT)
+                .fg(Color::Black)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("▍ ");
 
     frame.render_stateful_widget(list, block, &mut app.workspace_state);
 }
@@ -220,7 +259,7 @@ fn draw_date_input(frame: &mut Frame, app: &App, area: Rect, mode: DateInputMode
 
     let paragraph = Paragraph::new(lines)
         .alignment(Alignment::Left)
-        .block(Block::default().borders(Borders::ALL).title("Date Filter"))
+        .block(panel_block("Date Filter"))
         .wrap(Wrap { trim: true });
     frame.render_widget(paragraph, block);
 }
@@ -254,13 +293,13 @@ fn draw_toast(frame: &mut Frame, area: Rect, message: &str, is_error: bool) {
 
     frame.render_widget(Clear, rect);
     let style = if is_error {
-        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
+        Style::default().fg(ERROR).add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+        Style::default().fg(SUCCESS).add_modifier(Modifier::BOLD)
     };
     let paragraph = Paragraph::new(Line::from(Span::styled(message, style)))
         .alignment(Alignment::Center)
-        .block(Block::default().borders(Borders::ALL).title("Copied"));
+        .block(panel_block("Copied"));
     frame.render_widget(paragraph, rect);
 }
 
@@ -268,10 +307,8 @@ fn draw_help(frame: &mut Frame, area: Rect) {
     let block = centered_rect(70, 70, area);
     frame.render_widget(Clear, block);
 
-    let header_style = Style::default()
-        .add_modifier(Modifier::BOLD)
-        .fg(Color::Cyan);
-    let key_style = Style::default().fg(Color::Yellow);
+    let header_style = Style::default().add_modifier(Modifier::BOLD).fg(ACCENT);
+    let key_style = Style::default().fg(HIGHLIGHT);
 
     let rows = vec![
         Row::new(vec![
@@ -336,8 +373,51 @@ fn draw_help(frame: &mut Frame, area: Rect) {
     ];
 
     let table = Table::new(rows, [Constraint::Length(20), Constraint::Min(10)])
-        .block(Block::default().borders(Borders::ALL).title("Help"))
+        .block(panel_block("Help"))
         .column_spacing(2);
 
     frame.render_widget(table, block);
 }
+
+fn draw_background(frame: &mut Frame, area: Rect) {
+    let block = Block::default().style(Style::default().bg(BG).fg(TEXT));
+    frame.render_widget(block, area);
+}
+
+fn panel_block(title: &str) -> Block<'static> {
+    Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(border_style())
+        .style(panel_style())
+        .title(Line::from(Span::styled(
+            format!(" {} ", title),
+            title_style(),
+        )))
+}
+
+fn panel_style() -> Style {
+    Style::default().bg(PANEL).fg(TEXT)
+}
+
+fn border_style() -> Style {
+    Style::default().fg(BORDER)
+}
+
+fn title_style() -> Style {
+    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+}
+
+fn muted_style() -> Style {
+    Style::default().fg(MUTED)
+}
+
+const BG: Color = Color::Rgb(12, 18, 36);
+const PANEL: Color = Color::Rgb(18, 28, 52);
+const BORDER: Color = Color::Rgb(44, 72, 112);
+const TEXT: Color = Color::Rgb(220, 230, 255);
+const MUTED: Color = Color::Rgb(150, 170, 200);
+const ACCENT: Color = Color::Rgb(90, 180, 255);
+const HIGHLIGHT: Color = Color::Rgb(255, 210, 120);
+const SUCCESS: Color = Color::Rgb(120, 220, 140);
+const ERROR: Color = Color::Rgb(255, 120, 120);
