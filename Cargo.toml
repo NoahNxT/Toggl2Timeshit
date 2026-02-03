@@ -15,5 +15,5 @@ crossterm = "0.27"
 dirs = "5"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-ratatui = "0.26"
+ratatui = "0.30"
 reqwest = { version = "0.12", features = ["blocking", "json", "rustls-tls"] }
