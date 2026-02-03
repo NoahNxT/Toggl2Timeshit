@@ -593,6 +593,8 @@ impl App {
                     lines.push(format!("• {} — {} ({:.2}h)", project, entry, hours));
                 }
             }
+            lines.push(String::new());
+            lines.push(format!("Total hours: {:.2}h", self.total_hours));
         } else {
             for project in &self.grouped {
                 for entry in &project.entries {

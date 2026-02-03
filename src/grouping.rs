@@ -80,7 +80,16 @@ pub fn group_entries(
         })
         .collect();
 
-    result.sort_by(|a, b| b.total_hours.partial_cmp(&a.total_hours).unwrap());
+    result.sort_by(|a, b| {
+        match (&a.client_name, &b.client_name) {
+            (Some(a_client), Some(b_client)) => a_client.cmp(b_client),
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, None) => std::cmp::Ordering::Equal,
+        }
+        .then_with(|| b.total_hours.partial_cmp(&a.total_hours).unwrap())
+        .then_with(|| a.project_name.cmp(&b.project_name))
+    });
 
     result
 }
