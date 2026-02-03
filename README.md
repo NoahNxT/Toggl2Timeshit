@@ -45,8 +45,8 @@ timeshit --start-date YYYY-MM-DD --end-date YYYY-MM-DD
 
 ## Controls
 - `h` help (shows all keybinds)
-- `c` copy entries to clipboard
-- `x` copy entries with project names
+- `c` copy client entries to clipboard
+- `x` copy all entries with project and client names to clipboard
 - `d` set date range
 - `y` yesterday
 - Arrow keys to navigate projects
