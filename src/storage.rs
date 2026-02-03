@@ -65,29 +65,48 @@ fn token_path() -> Option<PathBuf> {
 }
 
 pub fn read_theme() -> Option<ThemePreference> {
-    let path = config_path()?;
-    let contents = fs::read_to_string(path).ok()?;
-    let config: Config = serde_json::from_str(&contents).ok()?;
-    config.theme
+    read_config().and_then(|config| config.theme)
 }
 
 pub fn write_theme(theme: ThemePreference) -> Result<(), io::Error> {
-    let path = config_path().ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Home directory not found"))?;
-    let config = Config { theme: Some(theme) };
-    let json = serde_json::to_string_pretty(&config)
-        .map_err(|err| io::Error::new(io::ErrorKind::Other, err.to_string()))?;
-    fs::write(path, json)
+    let mut config = read_config().unwrap_or_default();
+    config.theme = Some(theme);
+    write_config(&config)
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 struct Config {
     theme: Option<ThemePreference>,
+    target_hours: Option<f64>,
 }
 
 fn config_path() -> Option<PathBuf> {
     let mut path = dirs::home_dir()?;
     path.push(".toggl2tsc.json");
     Some(path)
+}
+
+pub fn read_target_hours() -> Option<f64> {
+    read_config().and_then(|config| config.target_hours)
+}
+
+pub fn write_target_hours(value: f64) -> Result<(), io::Error> {
+    let mut config = read_config().unwrap_or_default();
+    config.target_hours = Some(value);
+    write_config(&config)
+}
+
+fn read_config() -> Option<Config> {
+    let path = config_path()?;
+    let contents = fs::read_to_string(path).ok()?;
+    serde_json::from_str(&contents).ok()
+}
+
+fn write_config(config: &Config) -> Result<(), io::Error> {
+    let path = config_path().ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Home directory not found"))?;
+    let json = serde_json::to_string_pretty(config)
+        .map_err(|err| io::Error::new(io::ErrorKind::Other, err.to_string()))?;
+    fs::write(path, json)
 }
 
 pub fn read_cache() -> Option<CacheFile> {

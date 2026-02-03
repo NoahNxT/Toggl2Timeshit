@@ -26,6 +26,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         Mode::Login => draw_login(frame, app, size, &theme),
         Mode::WorkspaceSelect => draw_workspace_select(frame, app, size, &theme),
         Mode::DateInput(mode) => draw_date_input(frame, app, size, mode, &theme),
+        Mode::Settings => draw_settings(frame, app, size, &theme),
         Mode::Dashboard => {}
     }
 
@@ -157,7 +158,7 @@ fn header_line(app: &App, theme: &Theme) -> Line<'static> {
 }
 
 fn footer_line(app: &App, theme: &Theme) -> Line<'static> {
-    let total_style = if app.total_hours < 8.0 {
+    let total_style = if app.total_hours < app.target_hours {
         Style::default().fg(theme.error).add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(theme.success).add_modifier(Modifier::BOLD)
@@ -168,6 +169,8 @@ fn footer_line(app: &App, theme: &Theme) -> Line<'static> {
         Span::styled(format!("Total {:.2}h", app.total_hours), total_style),
         Span::raw("   "),
         Span::styled("h help", theme.muted_style()),
+        Span::raw(" · "),
+        Span::styled("s settings", theme.muted_style()),
         Span::raw(" · "),
         Span::styled("q quit", theme.muted_style()),
         if status.is_empty() {
@@ -383,6 +386,10 @@ fn draw_help(frame: &mut Frame, area: Rect, theme: &Theme) {
             Cell::from("Refresh"),
         ]),
         Row::new(vec![
+            Cell::from(Span::styled("s", key_style)),
+            Cell::from("Settings"),
+        ]),
+        Row::new(vec![
             Cell::from(Span::styled("m", key_style)),
             Cell::from("Toggle theme"),
         ]),
@@ -401,6 +408,66 @@ fn draw_help(frame: &mut Frame, area: Rect, theme: &Theme) {
         .column_spacing(2);
 
     frame.render_widget(table, block);
+}
+
+fn draw_settings(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
+    let block = centered_rect(70, 40, area);
+    frame.render_widget(Clear, block);
+
+    let sections = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(18), Constraint::Min(10)])
+        .split(block);
+
+    let selected_style = Style::default()
+        .bg(theme.accent)
+        .fg(theme.accent_contrast())
+        .add_modifier(Modifier::BOLD);
+
+    let categories = List::new(
+        app.settings_categories()
+            .iter()
+            .map(|category| ListItem::new(Line::from(category.clone())))
+            .collect::<Vec<_>>(),
+    )
+    .block(panel_block("Categories", theme))
+    .highlight_style(selected_style)
+    .highlight_symbol("▍ ");
+
+    frame.render_stateful_widget(categories, sections[0], app.settings_state());
+
+    let mut lines = vec![
+        Line::from(Span::styled(
+            app.settings_selected_category(),
+            Style::default().add_modifier(Modifier::BOLD).fg(theme.accent),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("Target hours: ", Style::default().add_modifier(Modifier::BOLD)),
+            if app.settings_is_editing() {
+                Span::styled(app.settings_input_value(), Style::default().fg(theme.accent))
+            } else {
+                Span::raw(app.settings_input_value())
+            },
+            Span::raw(" h"),
+        ]),
+        Line::from(""),
+        Line::from("Enter to edit/save • Esc back"),
+    ];
+
+    if let Some(status) = &app.status {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            status,
+            Style::default().fg(theme.error),
+        )));
+    }
+
+    let paragraph = Paragraph::new(lines)
+        .alignment(Alignment::Left)
+        .block(panel_block("General", theme))
+        .wrap(Wrap { trim: true });
+    frame.render_widget(paragraph, sections[1]);
 }
 
 fn draw_background(frame: &mut Frame, area: Rect, theme: &Theme) {

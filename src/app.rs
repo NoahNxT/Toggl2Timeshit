@@ -22,6 +22,7 @@ pub enum Mode {
     Login,
     WorkspaceSelect,
     DateInput(DateInputMode),
+    Settings,
     Error,
 }
 
@@ -49,6 +50,12 @@ enum CacheReason {
     ApiError,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SettingsMode {
+    SelectCategory,
+    EditValue,
+}
+
 pub struct App {
     pub should_quit: bool,
     pub needs_refresh: bool,
@@ -68,6 +75,7 @@ pub struct App {
     pub last_refresh: Option<DateTime<Local>>,
     pub show_help: bool,
     pub theme: ThemePreference,
+    pub target_hours: f64,
     token_hash: Option<String>,
     cache: Option<CacheFile>,
     quota: QuotaFile,
@@ -75,6 +83,10 @@ pub struct App {
     date_start_input: String,
     date_end_input: String,
     date_active_field: DateField,
+    settings_input: String,
+    settings_categories: Vec<String>,
+    settings_state: ListState,
+    settings_mode: SettingsMode,
     toast: Option<Toast>,
 }
 
@@ -87,6 +99,7 @@ impl App {
         };
         let mode = if token.is_some() { Mode::Loading } else { Mode::Login };
         let theme = storage::read_theme().unwrap_or(ThemePreference::Dark);
+        let target_hours = storage::read_target_hours().unwrap_or(8.0);
         let token_hash = token.as_ref().map(|value| storage::hash_token(value));
         let cache = token_hash
             .as_ref()
@@ -116,6 +129,7 @@ impl App {
             last_refresh: None,
             show_help: false,
             theme,
+            target_hours,
             token_hash,
             cache,
             quota,
@@ -123,6 +137,14 @@ impl App {
             date_start_input: String::new(),
             date_end_input: String::new(),
             date_active_field: DateField::Start,
+            settings_input: String::new(),
+            settings_categories: vec!["General".to_string()],
+            settings_state: {
+                let mut state = ListState::default();
+                state.select(Some(0));
+                state
+            },
+            settings_mode: SettingsMode::SelectCategory,
             toast: None,
         }
     }
@@ -132,6 +154,7 @@ impl App {
             Mode::Login => self.handle_login_input(key),
             Mode::WorkspaceSelect => self.handle_workspace_input(key),
             Mode::DateInput(mode) => self.handle_date_input(mode, key),
+            Mode::Settings => self.handle_settings_input(key),
             Mode::Dashboard | Mode::Loading | Mode::Error => self.handle_dashboard_input(key),
         }
     }
@@ -331,6 +354,7 @@ impl App {
             KeyCode::Char('y') => self.set_date_range(DateRange::yesterday()),
             KeyCode::Char('h') => self.show_help = true,
             KeyCode::Char('m') | KeyCode::Char('M') => self.toggle_theme(),
+            KeyCode::Char('s') => self.enter_settings(),
             KeyCode::Char('d') => self.enter_date_input(DateInputMode::Range),
             KeyCode::Char('c') | KeyCode::Char('C') => self.copy_entries_to_clipboard(false),
             KeyCode::Char('x') | KeyCode::Char('X') => self.copy_entries_to_clipboard(true),
@@ -458,6 +482,13 @@ impl App {
         self.status = None;
     }
 
+    fn enter_settings(&mut self) {
+        self.settings_input = format!("{:.2}", self.target_hours);
+        self.mode = Mode::Settings;
+        self.settings_mode = SettingsMode::SelectCategory;
+        self.status = None;
+    }
+
     fn trigger_refresh(&mut self) {
         self.mode = Mode::Loading;
         self.refresh_intent = RefreshIntent::ForceApi;
@@ -469,6 +500,116 @@ impl App {
         self.mode = Mode::Loading;
         self.refresh_intent = RefreshIntent::CacheOnly;
         self.needs_refresh = true;
+    }
+
+    fn handle_settings_input(&mut self, key: KeyEvent) {
+        match self.settings_mode {
+            SettingsMode::SelectCategory => self.handle_settings_category_input(key),
+            SettingsMode::EditValue => self.handle_settings_value_input(key),
+        }
+    }
+
+    fn handle_settings_category_input(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Char('q') => self.should_quit = true,
+            KeyCode::Esc => {
+                self.settings_input.clear();
+                self.mode = Mode::Dashboard;
+            }
+            KeyCode::Up => self.select_previous_setting_category(),
+            KeyCode::Down => self.select_next_setting_category(),
+            KeyCode::Enter => {
+                self.settings_mode = SettingsMode::EditValue;
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_settings_value_input(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Char('q') => self.should_quit = true,
+            KeyCode::Enter => {
+                let value = self.settings_input.trim();
+                let parsed: f64 = match value.parse() {
+                    Ok(value) => value,
+                    Err(_) => {
+                        self.status = Some("Invalid number for target hours.".to_string());
+                        return;
+                    }
+                };
+                if parsed <= 0.0 {
+                    self.status = Some("Target hours must be greater than 0.".to_string());
+                    return;
+                }
+                if let Err(err) = storage::write_target_hours(parsed) {
+                    self.status = Some(format!("Failed to save: {err}"));
+                    return;
+                }
+                self.target_hours = parsed;
+                self.status = Some("Target hours updated.".to_string());
+                self.set_toast("Target hours saved.", false);
+                self.settings_mode = SettingsMode::SelectCategory;
+            }
+            KeyCode::Backspace => {
+                self.settings_input.pop();
+            }
+            KeyCode::Char(ch) => {
+                if !ch.is_control() {
+                    self.settings_input.push(ch);
+                }
+            }
+            KeyCode::Esc => {
+                self.settings_input.clear();
+                self.settings_mode = SettingsMode::SelectCategory;
+            }
+            _ => {}
+        }
+    }
+
+    fn select_previous_setting_category(&mut self) {
+        if self.settings_categories.is_empty() {
+            return;
+        }
+        let selected = self.settings_state.selected().unwrap_or(0);
+        let new_index = if selected == 0 {
+            self.settings_categories.len() - 1
+        } else {
+            selected - 1
+        };
+        self.settings_state.select(Some(new_index));
+    }
+
+    fn select_next_setting_category(&mut self) {
+        if self.settings_categories.is_empty() {
+            return;
+        }
+        let selected = self.settings_state.selected().unwrap_or(0);
+        let new_index = if selected + 1 >= self.settings_categories.len() {
+            0
+        } else {
+            selected + 1
+        };
+        self.settings_state.select(Some(new_index));
+    }
+
+    pub fn settings_categories(&self) -> &[String] {
+        &self.settings_categories
+    }
+
+    pub fn settings_state(&mut self) -> &mut ListState {
+        &mut self.settings_state
+    }
+
+    pub fn settings_is_editing(&self) -> bool {
+        matches!(self.settings_mode, SettingsMode::EditValue)
+    }
+
+    pub fn settings_selected_category(&self) -> &str {
+        self.settings_state
+            .selected()
+            .and_then(|index| self.settings_categories.get(index))
+            .map(String::as_str)
+            .unwrap_or("General")
     }
 
     fn select_previous_project(&mut self) {
@@ -646,6 +787,10 @@ impl App {
             self.status = Some(format!("Theme set to {label}."));
             self.set_toast(format!("{label} enabled."), false);
         }
+    }
+
+    pub fn settings_input_value(&self) -> &str {
+        &self.settings_input
     }
 
     pub fn date_start_input_value(&self) -> &str {
