@@ -105,10 +105,14 @@ mod tests {
             Project {
                 id: 1,
                 name: "Project A".to_string(),
+                client_id: None,
+                client_name: None,
             },
             Project {
                 id: 2,
                 name: "Project B".to_string(),
+                client_id: None,
+                client_name: None,
             },
         ];
 
