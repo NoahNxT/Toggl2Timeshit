@@ -30,7 +30,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         Mode::Dashboard => {}
     }
 
-    if matches!(app.mode, Mode::Dashboard) {
+    if matches!(app.mode, Mode::Dashboard) && !app.show_help {
         if let Some(toast) = app.active_toast() {
             draw_toast(frame, size, &toast.message, toast.is_error, &theme);
         }
@@ -370,11 +370,15 @@ fn draw_help(frame: &mut Frame, area: Rect, theme: &Theme) {
         ]),
         Row::new(vec![
             Cell::from(Span::styled("c", key_style)),
-            Cell::from("Copy entries"),
+            Cell::from("Copy client entries on current date"),
+        ]),
+        Row::new(vec![
+            Cell::from(Span::styled("v", key_style)),
+            Cell::from("Copy project entries on current date"),
         ]),
         Row::new(vec![
             Cell::from(Span::styled("x", key_style)),
-            Cell::from("Copy with project names"),
+            Cell::from("Copy all entries on current date with project names"),
         ]),
         Row::new(vec![Cell::from(""), Cell::from("")]),
         Row::new(vec![
@@ -441,6 +445,12 @@ fn draw_settings(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
     let settings_input = app.settings_input_value().to_string();
     let is_editing = app.settings_is_editing();
 
+    let hint = if is_editing {
+        "Enter to save • Esc back"
+    } else {
+        "Enter to edit • Esc close"
+    };
+
     let mut lines = vec![
         Line::from(Span::styled(
             selected_category,
@@ -457,13 +467,11 @@ fn draw_settings(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
             Span::raw(" h"),
         ]),
         Line::from(""),
-        Line::from("Enter to edit/save • Esc back"),
+        Line::from(hint),
     ];
 
     if let Some(status) = app.visible_status() {
-        let is_success = status.to_lowercase().contains("updated")
-            || status.to_lowercase().contains("saved")
-            || status.to_lowercase().contains("success");
+        let is_success = is_success_status(&status);
         let color = if is_success { theme.success } else { theme.error };
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
@@ -494,6 +502,15 @@ fn panel_block(title: &str, theme: &Theme) -> Block<'static> {
             format!(" {} ", title),
             theme.title_style(),
         )))
+}
+
+fn is_success_status(status: &str) -> bool {
+    let lower = status.to_lowercase();
+    lower.contains("updated")
+        || lower.contains("saved")
+        || lower.contains("success")
+        || lower.contains("copied")
+        || lower.contains("set to")
 }
 
 #[derive(Clone, Copy)]

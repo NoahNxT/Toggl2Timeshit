@@ -360,7 +360,8 @@ impl App {
             KeyCode::Char('m') | KeyCode::Char('M') => self.toggle_theme(),
             KeyCode::Char('s') => self.enter_settings(),
             KeyCode::Char('d') => self.enter_date_input(DateInputMode::Range),
-            KeyCode::Char('c') | KeyCode::Char('C') => self.copy_entries_to_clipboard(false),
+            KeyCode::Char('c') | KeyCode::Char('C') => self.copy_client_entries_to_clipboard(),
+            KeyCode::Char('v') | KeyCode::Char('V') => self.copy_project_entries_to_clipboard(),
             KeyCode::Char('x') | KeyCode::Char('X') => self.copy_entries_to_clipboard(true),
             KeyCode::Up => self.select_previous_project(),
             KeyCode::Down => self.select_next_project(),
@@ -523,6 +524,7 @@ impl App {
             KeyCode::Up => self.select_previous_setting_category(),
             KeyCode::Down => self.select_next_setting_category(),
             KeyCode::Enter => {
+                self.sync_settings_input_for_category();
                 self.settings_mode = SettingsMode::EditValue;
             }
             _ => {}
@@ -554,7 +556,17 @@ impl App {
                 self.settings_input.pop();
             }
             KeyCode::Char(ch) => {
-                if !ch.is_control() {
+                if ch.is_ascii_digit() {
+                    self.settings_input.push(ch);
+                    return;
+                }
+                if ch == '.' || ch == ',' {
+                    if self.settings_input.is_empty() {
+                        return;
+                    }
+                    if self.settings_input.contains('.') || self.settings_input.contains(',') {
+                        return;
+                    }
                     self.settings_input.push(ch);
                 }
             }
@@ -611,6 +623,7 @@ impl App {
             selected - 1
         };
         self.settings_state.select(Some(new_index));
+        self.sync_settings_input_for_category();
     }
 
     fn select_next_setting_category(&mut self) {
@@ -624,6 +637,14 @@ impl App {
             selected + 1
         };
         self.settings_state.select(Some(new_index));
+        self.sync_settings_input_for_category();
+    }
+
+    fn sync_settings_input_for_category(&mut self) {
+        let category = self.settings_selected_category();
+        if category == "General" {
+            self.settings_input = format!("{:.2}", self.target_hours);
+        }
     }
 
     pub fn settings_categories(&self) -> &[String] {
@@ -712,17 +733,86 @@ impl App {
         }
 
         let text = self.format_entries_for_clipboard(include_project);
+        let message = if include_project {
+            "Copied entries with project names."
+        } else {
+            "Copied entries to clipboard."
+        };
+        self.write_clipboard(text, message);
+    }
+
+    fn copy_client_entries_to_clipboard(&mut self) {
+        let selected = match self.current_project() {
+            Some(project) => project,
+            None => {
+                self.status = Some("Select a project first.".to_string());
+                self.set_toast("Select a project first.", true);
+                return;
+            }
+        };
+
+        let mut lines: Vec<String> = Vec::new();
+        if let Some(client_name) = selected.client_name.as_ref() {
+            for project in &self.grouped {
+                if project.client_name.as_deref() == Some(client_name.as_str()) {
+                    for entry in &project.entries {
+                        lines.push(format!("• {} ({:.2}h)", entry.description, entry.total_hours));
+                    }
+                }
+            }
+        } else {
+            for entry in &selected.entries {
+                lines.push(format!("• {} ({:.2}h)", entry.description, entry.total_hours));
+            }
+        }
+
+        if lines.is_empty() {
+            self.status = Some("No entries to copy.".to_string());
+            self.set_toast("No entries to copy.", true);
+            return;
+        }
+
+        let text = lines.join("\n");
+        let message = if selected.client_name.is_some() {
+            "Copied client entries."
+        } else {
+            "Copied project entries."
+        };
+        self.write_clipboard(text, message);
+    }
+
+    fn copy_project_entries_to_clipboard(&mut self) {
+        let selected = match self.current_project() {
+            Some(project) => project,
+            None => {
+                self.status = Some("Select a project first.".to_string());
+                self.set_toast("Select a project first.", true);
+                return;
+            }
+        };
+
+        if selected.entries.is_empty() {
+            self.status = Some("No entries to copy.".to_string());
+            self.set_toast("No entries to copy.", true);
+            return;
+        }
+
+        let text = selected
+            .entries
+            .iter()
+            .map(|entry| format!("• {} ({:.2}h)", entry.description, entry.total_hours))
+            .collect::<Vec<_>>()
+            .join("\n");
+        self.write_clipboard(text, "Copied project entries.");
+    }
+
+    fn write_clipboard(&mut self, text: String, success_message: &str) {
         match Clipboard::new()
             .and_then(|mut clipboard| clipboard.set_text(text))
         {
             Ok(_) => {
-                let message = if include_project {
-                    "Copied entries with project names."
-                } else {
-                    "Copied entries to clipboard."
-                };
-                self.status = Some(message.to_string());
-                self.set_toast(message, false);
+                self.status = Some(success_message.to_string());
+                self.set_toast(success_message, false);
             }
             Err(err) => {
                 let message = format!("Clipboard error: {err}");
