@@ -29,8 +29,8 @@ jobs:
             cp target/release/timeshit.exe dist/
             tar -czf dist/timeshit-Windows.tar.gz -C dist timeshit.exe
           else
-            cp target/release/timeshit dist/
-            tar -czf dist/timeshit-${RUNNER_OS}.tar.gz -C dist timeshit
+            cp target/release/timeshit dist/timeshit-${RUNNER_OS}
+            tar -czf dist/timeshit-${RUNNER_OS}.tar.gz -C dist timeshit-${RUNNER_OS}
           fi
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4
