@@ -243,20 +243,33 @@ fn draw_date_input(frame: &mut Frame, app: &App, area: Rect, mode: DateInputMode
     frame.render_widget(Clear, block);
 
     let label = match mode {
-        DateInputMode::Single => "Enter date (YYYY-MM-DD)",
-        DateInputMode::Start => "Enter start date (YYYY-MM-DD)",
-        DateInputMode::End => "Enter end date (YYYY-MM-DD)",
+        DateInputMode::Range => "Select date range (YYYY-MM-DD)",
+    };
+
+    let start_value = if app.is_date_start_active() {
+        Span::styled(app.date_start_input_value(), Style::default().fg(theme.accent))
+    } else {
+        Span::raw(app.date_start_input_value())
+    };
+    let end_value = if app.is_date_start_active() {
+        Span::raw(app.date_end_input_value())
+    } else {
+        Span::styled(app.date_end_input_value(), Style::default().fg(theme.accent))
     };
 
     let mut lines = vec![
         Line::from(label),
         Line::from(""),
         Line::from(vec![
-            Span::styled("Input: ", Style::default().add_modifier(Modifier::BOLD)),
-            Span::raw(&app.input),
+            Span::styled("Start: ", Style::default().add_modifier(Modifier::BOLD)),
+            start_value,
+        ]),
+        Line::from(vec![
+            Span::styled("End:   ", Style::default().add_modifier(Modifier::BOLD)),
+            end_value,
         ]),
         Line::from(""),
-        Line::from("Press Enter to apply, Esc to cancel"),
+        Line::from("Tab to switch field • Enter apply • Esc cancel"),
     ];
 
     if let Some(status) = &app.status {
@@ -337,15 +350,11 @@ fn draw_help(frame: &mut Frame, area: Rect, theme: &Theme) {
         ]),
         Row::new(vec![
             Cell::from(Span::styled("d", key_style)),
-            Cell::from("Set single date"),
+            Cell::from("Set date range"),
         ]),
         Row::new(vec![
-            Cell::from(Span::styled("s", key_style)),
-            Cell::from("Set start date"),
-        ]),
-        Row::new(vec![
-            Cell::from(Span::styled("e", key_style)),
-            Cell::from("Set end date"),
+            Cell::from(Span::styled("Tab", key_style)),
+            Cell::from("Switch range field"),
         ]),
         Row::new(vec![Cell::from(""), Cell::from("")]),
         Row::new(vec![

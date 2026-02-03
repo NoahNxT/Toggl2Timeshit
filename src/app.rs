@@ -1,4 +1,4 @@
-use chrono::{DateTime, Local, NaiveDate};
+use chrono::{DateTime, Local};
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::widgets::ListState;
 use std::time::{Duration, Instant};
@@ -26,7 +26,11 @@ pub enum Mode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DateInputMode {
-    Single,
+    Range,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DateField {
     Start,
     End,
 }
@@ -67,6 +71,9 @@ pub struct App {
     cache: Option<CacheFile>,
     quota: QuotaFile,
     refresh_intent: RefreshIntent,
+    date_start_input: String,
+    date_end_input: String,
+    date_active_field: DateField,
     toast: Option<Toast>,
 }
 
@@ -112,6 +119,9 @@ impl App {
             cache,
             quota,
             refresh_intent: RefreshIntent::CacheOnly,
+            date_start_input: String::new(),
+            date_end_input: String::new(),
+            date_active_field: DateField::Start,
             toast: None,
         }
     }
@@ -315,9 +325,7 @@ impl App {
             }
             KeyCode::Char('h') => self.show_help = true,
             KeyCode::Char('m') | KeyCode::Char('M') => self.toggle_theme(),
-            KeyCode::Char('d') => self.enter_date_input(DateInputMode::Single),
-            KeyCode::Char('s') => self.enter_date_input(DateInputMode::Start),
-            KeyCode::Char('e') => self.enter_date_input(DateInputMode::End),
+            KeyCode::Char('d') => self.enter_date_input(DateInputMode::Range),
             KeyCode::Char('c') | KeyCode::Char('C') => self.copy_entries_to_clipboard(false),
             KeyCode::Char('x') | KeyCode::Char('X') => self.copy_entries_to_clipboard(true),
             KeyCode::Up => self.select_previous_project(),
@@ -392,24 +400,15 @@ impl App {
         match key.code {
             KeyCode::Char('q') => self.should_quit = true,
             KeyCode::Enter => {
-                let date_value = match parse_date(self.input.trim()) {
-                    Ok(date) => date,
-                    Err(err) => {
-                        self.status = Some(err);
-                        return;
-                    }
-                };
-
                 let updated = match mode {
-                    DateInputMode::Single => Ok(DateRange::from_single(date_value)),
-                    DateInputMode::Start => self.update_start_date(date_value),
-                    DateInputMode::End => self.update_end_date(date_value),
+                    DateInputMode::Range => self.update_range_from_input(),
                 };
 
                 match updated {
                     Ok(range) => {
                         self.date_range = range;
-                        self.input.clear();
+                        self.date_start_input.clear();
+                        self.date_end_input.clear();
                         self.mode = Mode::Loading;
                         self.refresh_intent = RefreshIntent::CacheOnly;
                         self.needs_refresh = true;
@@ -420,40 +419,35 @@ impl App {
                     }
                 }
             }
+            KeyCode::Tab => {
+                self.date_active_field = match self.date_active_field {
+                    DateField::Start => DateField::End,
+                    DateField::End => DateField::Start,
+                };
+            }
             KeyCode::Backspace => {
-                self.input.pop();
+                self.active_date_input_mut().pop();
             }
             KeyCode::Char(ch) => {
                 if !ch.is_control() {
-                    self.input.push(ch);
+                    self.active_date_input_mut().push(ch);
                 }
             }
             KeyCode::Esc => {
-                self.input.clear();
+                self.date_start_input.clear();
+                self.date_end_input.clear();
                 self.mode = Mode::Dashboard;
             }
             _ => {}
         }
     }
 
-    fn update_start_date(&self, date: NaiveDate) -> Result<DateRange, String> {
-        let current_end = self.date_range.end_date();
-        if date > current_end {
-            return Err("Start date cannot be after end date.".to_string());
-        }
-        Ok(DateRange::from_bounds(date, current_end))
-    }
-
-    fn update_end_date(&self, date: NaiveDate) -> Result<DateRange, String> {
-        let current_start = self.date_range.start_date();
-        if date < current_start {
-            return Err("End date cannot be before start date.".to_string());
-        }
-        Ok(DateRange::from_bounds(current_start, date))
-    }
-
     fn enter_date_input(&mut self, mode: DateInputMode) {
-        self.input.clear();
+        let start = self.date_range.start_date().format("%Y-%m-%d").to_string();
+        let end = self.date_range.end_date().format("%Y-%m-%d").to_string();
+        self.date_start_input = start;
+        self.date_end_input = end;
+        self.date_active_field = DateField::Start;
         self.mode = Mode::DateInput(mode);
         self.status = None;
     }
@@ -607,6 +601,39 @@ impl App {
             };
             self.status = Some(format!("Theme set to {label}."));
             self.set_toast(format!("{label} enabled."), false);
+        }
+    }
+
+    pub fn date_start_input_value(&self) -> &str {
+        &self.date_start_input
+    }
+
+    pub fn date_end_input_value(&self) -> &str {
+        &self.date_end_input
+    }
+
+    pub fn is_date_start_active(&self) -> bool {
+        matches!(self.date_active_field, DateField::Start)
+    }
+
+    fn update_range_from_input(&self) -> Result<DateRange, String> {
+        let start_text = self.date_start_input.trim();
+        let end_text = self.date_end_input.trim();
+        if start_text.is_empty() || end_text.is_empty() {
+            return Err("Start and end date are required.".to_string());
+        }
+        let start_date = parse_date(start_text)?;
+        let end_date = parse_date(end_text)?;
+        if start_date > end_date {
+            return Err("Start date cannot be after end date.".to_string());
+        }
+        Ok(DateRange::from_bounds(start_date, end_date))
+    }
+
+    fn active_date_input_mut(&mut self) -> &mut String {
+        match self.date_active_field {
+            DateField::Start => &mut self.date_start_input,
+            DateField::End => &mut self.date_end_input,
         }
     }
 

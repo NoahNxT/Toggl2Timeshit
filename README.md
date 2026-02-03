@@ -47,6 +47,7 @@ timeshit --start-date YYYY-MM-DD --end-date YYYY-MM-DD
 - `h` help (shows all keybinds)
 - `c` copy entries to clipboard
 - `x` copy entries with project names
+- `d` set date range
 - Arrow keys to navigate projects
 
 ## License
