@@ -1,19 +1,19 @@
 [package]
 name = "timeshit"
-version = "0.1.0"
-edition = "2021"
+version = "1.0.0"
+edition = "2024"
 description = "Toggl Track to timesheet TUI"
 license = "MIT"
 
 [dependencies]
-base64 = "0.22"
-sha2 = "0.10"
-arboard = "3.4"
-chrono = { version = "0.4", features = ["clock", "serde"] }
-clap = { version = "4.5", features = ["derive"] }
-crossterm = "0.27"
-dirs = "5"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-ratatui = "0.26"
-reqwest = { version = "0.12", features = ["blocking", "json", "rustls-tls"] }
+base64 = "0.22.1"
+sha2 = "0.10.9"
+arboard = "3.6.1"
+chrono = { version = "0.4.43", features = ["clock", "serde"] }
+clap = { version = "4.5.56", features = ["derive"] }
+crossterm = "0.29.0"
+dirs = "6.0.0"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+ratatui = "0.30.0"
+reqwest = { version = "0.13.1", features = ["blocking", "json"] }

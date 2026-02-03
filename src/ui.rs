@@ -10,7 +10,7 @@ use crate::app::{App, DateInputMode, Mode};
 use crate::storage::ThemePreference;
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
-    let size = frame.size();
+    let size = frame.area();
     let theme = theme_from(app.theme);
     draw_background(frame, size, &theme);
     draw_dashboard(frame, app, size, &theme);
@@ -42,7 +42,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 }
 
 fn draw_dashboard(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
-    let content = area.inner(&Margin {
+    let content = area.inner(Margin {
         vertical: 1,
         horizontal: 2,
     });
