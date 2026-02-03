@@ -1,0 +1,4 @@
+title: Timeshit TUI
+description: A modern Rust TUI for Toggl Track timesheets
+theme: jekyll-theme-cayman
+show_downloads: true

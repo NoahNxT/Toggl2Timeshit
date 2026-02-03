@@ -1,109 +1,60 @@
-![GitHub Release Date](https://img.shields.io/github/release-date/NoahNxT/Toggl2Timeshit)
-![GitHub code size in bytes](https://img.shields.io/github/languages/code-size/NoahNxT/Toggl2Timeshit)
-![NPM Version](https://img.shields.io/npm/v/toggl2timeshit)
-![X (formerly Twitter) Follow](https://img.shields.io/twitter/follow/does_it_code)
+# Toggl2Timeshit (Timeshit TUI)
 
-# Toggl2Timeshit
-
-Toggl2Timeshit is a simple yet powerful tool to convert Toggl Track reports into a user-friendly timesheet format.
+Toggl2Timeshit is now a Rust-based Terminal UI (TUI) that turns Toggl Track time entries into a clean, navigable timesheet dashboard.
 
 ## Features
-- Fetch time entries from Toggl Track.
-- Group and display time entries by project.
-- Summarize total hours spent per project and per day.
-- Support for custom date ranges.
+- TUI dashboard with project summaries and ticket details
+- Workspace selection
+- Date filters (single day or range)
+- Total hours with visual status
+- Secure token storage compatible with previous versions (`~/.toggl2tsc`)
+- Persistent cache to minimize Toggl API usage (manual refresh only)
+- Built-in settings for target hours and integrations
 
 ## Installation
+### GitHub Releases
+Download the latest release binary for your OS and place it in your PATH.
 
-Install the package globally using npm:
+### Build from Source
 ```bash
-npm install -g toggl2timeshit
+cargo build --release
 ```
+The binary will be available at `target/release/timeshit`.
 
 ## Authentication
- 
-You can find it in your [Toggl Track Profile](https://track.toggl.com/profile).`
-
+Run the login flow in the TUI or set an environment variable:
 ```bash
-npx timeshit login
+timeshit login
 ```
+or
+```bash
+export TOGGL_API_TOKEN="your-token"
+```
+The token is stored at `~/.toggl2tsc`.
 
 ## Usage
-### Generate Timesheet for Today
-
-Run the command to generate the timesheet for today:
+Launch the dashboard:
 ```bash
-npx timeshit list
+timeshit
 ```
 
-### Generate Timesheet for a Custom Date Range
-You can specify a custom date range using the --start-date (-sd) and --end-date (-ed) options:
+Optional flags:
 ```bash
-npx timeshit list --start-date YYYY-MM-DD --end-date YYYY-MM-DD
+timeshit --date YYYY-MM-DD
+timeshit --start-date YYYY-MM-DD --end-date YYYY-MM-DD
 ```
 
-### Generate Timesheet for a Specific Date
-You can specify a specific date using the --date (-d) option alone:
-```bash
-npx timeshit list --date YYYY-MM-DD
-```
+## Documentation
+Full documentation is available via GitHub Pages (see `docs/`).
 
-
-## Generate Timesheets from a Date until Today
-You can specify a custom date range using the --start-date (-sd) option alone:
-
-```bash
-npx timeshit list --start-date YYYY-MM-DD
-```
-
-## Example Output
-```bash
-Your current time entries:
-
-Project A
-+++++++++
-Total hours: 0.60
-
-Tickets:
-• Entry 1 name (0.27)
-• Entry 2 name (0.33)
-
-####################
-
-Project B
-+++++++++
-Total hours: 1.56
-
-Tickets:
-• Entry 1 name (0.61)
-• Entry 2 name (0.61)
-• Entry 3 name (0.34)
-
-####################
-
-Project C
-+++++++++
-Total hours: 0.53
-
-Tickets:
-• Entry 1 name (0.53)
-
-####################
-
-=============================
-Total hours today: 3.49
-Total hours yesterday: 0.00
-```
-
-## Contributing
-We welcome contributions to Toggl2Timeshit! If you have any improvements or bug fixes, please open an issue or submit a pull request on GitHub.
+## Controls
+- `h` help (shows all keybinds)
+- `c` copy client entries to clipboard
+- `v` copy project entries to clipboard
+- `x` copy all entries with project and client names to clipboard
+- `d` set date range
+- `y` yesterday
+- Arrow keys to navigate projects
 
 ## License
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Connect
-- Follow me on Twitter: [@does_it_code](https://twitter.com/does_it_code)
-- Connect with me on LinkedIn: [Noah Gillard](https://www.linkedin.com/in/noah-gillard/)
-
-Feel free to reach out with any questions or feedback! Enjoy using Toggl2Timeshit to simplify your timesheet generation.
-
+MIT
