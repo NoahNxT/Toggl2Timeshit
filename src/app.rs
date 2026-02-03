@@ -1,12 +1,14 @@
 use chrono::{DateTime, Local, NaiveDate};
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::widgets::ListState;
+use std::time::{Duration, Instant};
 
 use crate::dates::{parse_date, DateRange};
 use crate::grouping::{group_entries, GroupedProject};
 use crate::models::{Project, TimeEntry, Workspace};
 use crate::storage;
 use crate::toggl::{TogglClient, TogglError};
+use arboard::Clipboard;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -42,6 +44,7 @@ pub struct App {
     pub total_hours: f64,
     pub project_state: ListState,
     pub last_refresh: Option<DateTime<Local>>,
+    toast: Option<Toast>,
 }
 
 impl App {
@@ -78,6 +81,7 @@ impl App {
             total_hours: 0.0,
             project_state,
             last_refresh: None,
+            toast: None,
         }
     }
 
@@ -210,6 +214,11 @@ impl App {
             KeyCode::Char('d') => self.enter_date_input(DateInputMode::Single),
             KeyCode::Char('s') => self.enter_date_input(DateInputMode::Start),
             KeyCode::Char('e') => self.enter_date_input(DateInputMode::End),
+            KeyCode::Enter => {
+                let include_project = key.modifiers.contains(KeyModifiers::SHIFT);
+                self.copy_entries_to_clipboard(include_project);
+            }
+            KeyCode::Char('p') | KeyCode::Char('P') => self.copy_entries_to_clipboard(true),
             KeyCode::Up => self.select_previous_project(),
             KeyCode::Down => self.select_next_project(),
             _ => {}
@@ -400,4 +409,85 @@ impl App {
             .selected()
             .and_then(|index| self.grouped.get(index))
     }
+
+    fn copy_entries_to_clipboard(&mut self, include_project: bool) {
+        if self.grouped.is_empty() {
+            self.status = Some("No entries to copy.".to_string());
+            self.set_toast("No entries to copy.", true);
+            return;
+        }
+
+        let text = self.format_entries_for_clipboard(include_project);
+        match Clipboard::new()
+            .and_then(|mut clipboard| clipboard.set_text(text))
+        {
+            Ok(_) => {
+                let message = if include_project {
+                    "Copied entries with project names."
+                } else {
+                    "Copied entries to clipboard."
+                };
+                self.status = Some(message.to_string());
+                self.set_toast(message, false);
+            }
+            Err(err) => {
+                let message = format!("Clipboard error: {err}");
+                self.status = Some(message.clone());
+                self.set_toast(message, true);
+            }
+        }
+    }
+
+    fn format_entries_for_clipboard(&self, include_project: bool) -> String {
+        let mut lines: Vec<String> = Vec::new();
+        for project in &self.grouped {
+            for entry in &project.entries {
+                if include_project {
+                    lines.push(format!(
+                        "• {} — {} ({:.2}h)",
+                        project.name, entry.description, entry.total_hours
+                    ));
+                } else {
+                    lines.push(format!("• {} ({:.2}h)", entry.description, entry.total_hours));
+                }
+            }
+        }
+
+        while matches!(lines.last(), Some(last) if last.is_empty()) {
+            lines.pop();
+        }
+
+        lines.join("\n")
+    }
+
+    pub fn active_toast(&mut self) -> Option<ToastView> {
+        let toast = self.toast.as_ref()?;
+        if toast.created_at.elapsed() > Duration::from_secs(2) {
+            self.toast = None;
+            return None;
+        }
+        Some(ToastView {
+            message: toast.message.clone(),
+            is_error: toast.is_error,
+        })
+    }
+
+    fn set_toast(&mut self, message: impl Into<String>, is_error: bool) {
+        self.toast = Some(Toast {
+            message: message.into(),
+            created_at: Instant::now(),
+            is_error,
+        });
+    }
+}
+
+struct Toast {
+    message: String,
+    created_at: Instant,
+    is_error: bool,
+}
+
+pub struct ToastView {
+    pub message: String,
+    pub is_error: bool,
 }

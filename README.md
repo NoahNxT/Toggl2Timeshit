@@ -49,8 +49,9 @@ timeshit --start-date YYYY-MM-DD --end-date YYYY-MM-DD
 - `d` set single date
 - `s` set start date
 - `e` set end date
+- `Enter` copy entries to clipboard
+- `p` copy entries with project names (Shift+Enter may not be supported by all terminals)
 - Arrow keys to navigate projects
-- `Enter` to confirm selections
 
 ## License
 MIT

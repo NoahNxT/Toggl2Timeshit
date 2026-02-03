@@ -18,6 +18,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         Mode::DateInput(mode) => draw_date_input(frame, app, size, mode),
         Mode::Dashboard => {}
     }
+
+    if matches!(app.mode, Mode::Dashboard) {
+        if let Some(toast) = app.active_toast() {
+            draw_toast(frame, size, &toast.message, toast.is_error);
+        }
+    }
 }
 
 fn draw_dashboard(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -116,7 +122,10 @@ fn footer_line(app: &App) -> Line<'static> {
     Line::from(vec![
         Span::styled(format!("Total: {:.2}h", app.total_hours), total_style),
         Span::raw("  "),
-        Span::styled("q quit • r refresh • d date • s start • e end • t today", Style::default().fg(Color::Gray)),
+        Span::styled(
+            "q quit • r refresh • d date • s start • e end • t today • Enter copy • p copy+project",
+            Style::default().fg(Color::Gray),
+        ),
         if status.is_empty() {
             Span::raw("")
         } else {
@@ -231,4 +240,23 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
         ])
         .split(popup_layout[1]);
     vertical[1]
+}
+
+fn draw_toast(frame: &mut Frame, area: Rect, message: &str, is_error: bool) {
+    let width = (message.len() as u16 + 6).clamp(20, area.width.saturating_sub(2));
+    let height = 3;
+    let x = area.x + area.width.saturating_sub(width + 1);
+    let y = area.y + area.height.saturating_sub(height + 4);
+    let rect = Rect::new(x, y, width, height);
+
+    frame.render_widget(Clear, rect);
+    let style = if is_error {
+        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+    };
+    let paragraph = Paragraph::new(Line::from(Span::styled(message, style)))
+        .alignment(Alignment::Center)
+        .block(Block::default().borders(Borders::ALL).title("Copied"));
+    frame.render_widget(paragraph, rect);
 }
