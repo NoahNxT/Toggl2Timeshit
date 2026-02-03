@@ -39,9 +39,13 @@ pub struct CacheFile {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct QuotaFile {
+    #[serde(default)]
+    pub version: u32,
     pub date: String,
     pub used_calls: u32,
 }
+
+const QUOTA_FILE_VERSION: u32 = 2;
 
 pub fn read_token() -> Option<String> {
     if let Ok(value) = env::var("TOGGL_API_TOKEN") {
@@ -162,6 +166,7 @@ pub fn read_quota() -> QuotaFile {
         }
     }
     QuotaFile {
+        version: QUOTA_FILE_VERSION,
         date: today,
         used_calls: 0,
     }
@@ -206,6 +211,10 @@ fn quota_path() -> Option<PathBuf> {
 }
 
 fn normalize_quota(quota: &mut QuotaFile, today: &str) {
+    if quota.version != QUOTA_FILE_VERSION {
+        quota.version = QUOTA_FILE_VERSION;
+        quota.used_calls = 0;
+    }
     if quota.date != today {
         quota.date = today.to_string();
         quota.used_calls = 0;
@@ -233,6 +242,7 @@ mod tests {
     #[test]
     fn quota_resets_on_new_day() {
         let mut quota = QuotaFile {
+            version: QUOTA_FILE_VERSION,
             date: "2026-02-02".to_string(),
             used_calls: 12,
         };

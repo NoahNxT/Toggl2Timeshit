@@ -234,11 +234,6 @@ impl App {
         let mut cache_reason: Option<CacheReason> = None;
         let mut cache_timestamp: Option<String> = None;
 
-        if allow_api && self.quota_remaining() < 3 {
-            allow_api = false;
-            cache_reason = Some(CacheReason::Quota);
-        }
-
         let workspaces = match self.resolve_workspaces(
             &client,
             allow_api,
@@ -1488,7 +1483,7 @@ impl App {
     }
 
     fn consume_quota(&mut self) {
-        self.quota.used_calls = self.quota.used_calls.saturating_add(1);
+        self.quota.used_calls = self.quota.used_calls.saturating_add(1).min(CALL_LIMIT);
         let _ = storage::write_quota(&self.quota);
     }
 
@@ -1580,49 +1575,38 @@ impl App {
         client: &TogglClient,
         allow_api: bool,
         cache_reason: &mut Option<CacheReason>,
-        cache_timestamp: &mut Option<String>,
+        _cache_timestamp: &mut Option<String>,
     ) -> Option<Vec<Workspace>> {
-        let mut api_error: Option<TogglError> = None;
-        if allow_api {
-            if self.quota_remaining() == 0 {
-                if cache_reason.is_none() {
-                    *cache_reason = Some(CacheReason::Quota);
-                }
-            } else {
-                self.consume_quota();
-                match client.fetch_workspaces() {
-                    Ok(workspaces) => {
-                        self.update_cache_workspaces(&workspaces);
-                        return Some(workspaces);
-                    }
-                    Err(err) => {
-                        if matches!(err, TogglError::Unauthorized) {
-                            self.handle_error(err);
-                            return None;
-                        }
-                        api_error = Some(err);
-                        if cache_reason.is_none() {
-                            *cache_reason = Some(CacheReason::ApiError);
-                        }
-                    }
-                }
-            }
-        } else if cache_reason.is_none() {
-            *cache_reason = Some(CacheReason::CacheOnly);
+        if let Some(cached) = self.cached_workspaces() {
+            return Some(cached.data);
         }
 
-        if let Some(cached) = self.cached_workspaces() {
-            if cache_timestamp.is_none() {
-                *cache_timestamp = Some(cached.fetched_at.clone());
+        if !allow_api {
+            if cache_reason.is_none() {
+                *cache_reason = Some(CacheReason::CacheOnly);
             }
-            return Some(cached.data);
+            self.mode = Mode::Error;
+            self.status = Some(self.no_cache_message());
+            return None;
+        }
+
+        let mut api_error: Option<TogglError> = None;
+        match client.fetch_workspaces() {
+            Ok(workspaces) => {
+                self.update_cache_workspaces(&workspaces);
+                return Some(workspaces);
+            }
+            Err(err) => {
+                if matches!(err, TogglError::Unauthorized) {
+                    self.handle_error(err);
+                    return None;
+                }
+                api_error = Some(err);
+            }
         }
 
         if let Some(err) = api_error {
             self.handle_error(err);
-        } else if matches!(cache_reason, Some(CacheReason::Quota)) {
-            self.mode = Mode::Error;
-            self.status = Some(self.quota_exhausted_message());
         } else {
             self.mode = Mode::Error;
             self.status = Some(self.no_cache_message());
@@ -1636,49 +1620,38 @@ impl App {
         allow_api: bool,
         workspace_id: u64,
         cache_reason: &mut Option<CacheReason>,
-        cache_timestamp: &mut Option<String>,
+        _cache_timestamp: &mut Option<String>,
     ) -> Option<Vec<Project>> {
-        let mut api_error: Option<TogglError> = None;
-        if allow_api {
-            if self.quota_remaining() == 0 {
-                if cache_reason.is_none() {
-                    *cache_reason = Some(CacheReason::Quota);
-                }
-            } else {
-                self.consume_quota();
-                match client.fetch_projects(workspace_id) {
-                    Ok(projects) => {
-                        self.update_cache_projects(workspace_id, &projects);
-                        return Some(projects);
-                    }
-                    Err(err) => {
-                        if matches!(err, TogglError::Unauthorized) {
-                            self.handle_error(err);
-                            return None;
-                        }
-                        api_error = Some(err);
-                        if cache_reason.is_none() {
-                            *cache_reason = Some(CacheReason::ApiError);
-                        }
-                    }
-                }
-            }
-        } else if cache_reason.is_none() {
-            *cache_reason = Some(CacheReason::CacheOnly);
+        if let Some(cached) = self.cached_projects(workspace_id) {
+            return Some(cached.data);
         }
 
-        if let Some(cached) = self.cached_projects(workspace_id) {
-            if cache_timestamp.is_none() {
-                *cache_timestamp = Some(cached.fetched_at.clone());
+        if !allow_api {
+            if cache_reason.is_none() {
+                *cache_reason = Some(CacheReason::CacheOnly);
             }
-            return Some(cached.data);
+            self.mode = Mode::Error;
+            self.status = Some(self.no_cache_message());
+            return None;
+        }
+
+        let mut api_error: Option<TogglError> = None;
+        match client.fetch_projects(workspace_id) {
+            Ok(projects) => {
+                self.update_cache_projects(workspace_id, &projects);
+                return Some(projects);
+            }
+            Err(err) => {
+                if matches!(err, TogglError::Unauthorized) {
+                    self.handle_error(err);
+                    return None;
+                }
+                api_error = Some(err);
+            }
         }
 
         if let Some(err) = api_error {
             self.handle_error(err);
-        } else if matches!(cache_reason, Some(CacheReason::Quota)) {
-            self.mode = Mode::Error;
-            self.status = Some(self.quota_exhausted_message());
         } else {
             self.mode = Mode::Error;
             self.status = Some(self.no_cache_message());
@@ -1719,11 +1692,10 @@ impl App {
             return Some(client_names);
         }
 
-        if !allow_api || self.quota_remaining() == 0 {
+        if !allow_api {
             return Some(client_names);
         }
 
-        self.consume_quota();
         match client.fetch_clients(workspace_id) {
             Ok(clients) => {
                 self.update_cache_clients(workspace_id, &clients);
