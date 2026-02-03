@@ -128,7 +128,7 @@ fn footer_line(app: &App) -> Line<'static> {
     Line::from(vec![
         Span::styled(format!("Total: {:.2}h", app.total_hours), total_style),
         Span::raw("  "),
-        Span::styled("h help", Style::default().fg(Color::Gray)),
+        Span::styled("h help • q quit", Style::default().fg(Color::Gray)),
         if status.is_empty() {
             Span::raw("")
         } else {
@@ -309,15 +309,11 @@ fn draw_help(frame: &mut Frame, area: Rect) {
             Cell::from(""),
         ]),
         Row::new(vec![
-            Cell::from(Span::styled("Enter", key_style)),
+            Cell::from(Span::styled("c", key_style)),
             Cell::from("Copy entries"),
         ]),
         Row::new(vec![
-            Cell::from(Span::styled("Shift+Enter", key_style)),
-            Cell::from("Copy with project names (if supported)"),
-        ]),
-        Row::new(vec![
-            Cell::from(Span::styled("p", key_style)),
+            Cell::from(Span::styled("x", key_style)),
             Cell::from("Copy with project names"),
         ]),
         Row::new(vec![Cell::from(""), Cell::from("")]),

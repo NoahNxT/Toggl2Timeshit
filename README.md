@@ -44,8 +44,8 @@ timeshit --start-date YYYY-MM-DD --end-date YYYY-MM-DD
 
 ## Controls
 - `h` help (shows all keybinds)
-- `Enter` copy entries to clipboard
-- `p` copy entries with project names (Shift+Enter may not be supported by all terminals)
+- `c` copy entries to clipboard
+- `x` copy entries with project names
 - Arrow keys to navigate projects
 
 ## License

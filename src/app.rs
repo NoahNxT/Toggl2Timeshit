@@ -228,11 +228,8 @@ impl App {
             KeyCode::Char('d') => self.enter_date_input(DateInputMode::Single),
             KeyCode::Char('s') => self.enter_date_input(DateInputMode::Start),
             KeyCode::Char('e') => self.enter_date_input(DateInputMode::End),
-            KeyCode::Enter => {
-                let include_project = key.modifiers.contains(KeyModifiers::SHIFT);
-                self.copy_entries_to_clipboard(include_project);
-            }
-            KeyCode::Char('p') | KeyCode::Char('P') => self.copy_entries_to_clipboard(true),
+            KeyCode::Char('c') | KeyCode::Char('C') => self.copy_entries_to_clipboard(false),
+            KeyCode::Char('x') | KeyCode::Char('X') => self.copy_entries_to_clipboard(true),
             KeyCode::Up => self.select_previous_project(),
             KeyCode::Down => self.select_next_project(),
             _ => {}
