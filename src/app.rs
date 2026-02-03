@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use crate::dates::{parse_date, DateRange};
 use crate::grouping::{group_entries, GroupedProject};
 use crate::models::{Project, TimeEntry, Workspace};
-use crate::storage;
+use crate::storage::{self, ThemePreference};
 use crate::toggl::{TogglClient, TogglError};
 use arboard::Clipboard;
 
@@ -45,6 +45,7 @@ pub struct App {
     pub project_state: ListState,
     pub last_refresh: Option<DateTime<Local>>,
     pub show_help: bool,
+    pub theme: ThemePreference,
     toast: Option<Toast>,
 }
 
@@ -60,6 +61,7 @@ impl App {
         } else {
             Mode::Login
         };
+        let theme = storage::read_theme().unwrap_or(ThemePreference::Dark);
         let mut project_state = ListState::default();
         project_state.select(Some(0));
         let mut workspace_state = ListState::default();
@@ -83,6 +85,7 @@ impl App {
             project_state,
             last_refresh: None,
             show_help: false,
+            theme,
             toast: None,
         }
     }
@@ -225,6 +228,7 @@ impl App {
                 self.trigger_refresh();
             }
             KeyCode::Char('h') => self.show_help = true,
+            KeyCode::Char('m') | KeyCode::Char('M') => self.toggle_theme(),
             KeyCode::Char('d') => self.enter_date_input(DateInputMode::Single),
             KeyCode::Char('s') => self.enter_date_input(DateInputMode::Start),
             KeyCode::Char('e') => self.enter_date_input(DateInputMode::End),
@@ -489,6 +493,24 @@ impl App {
             created_at: Instant::now(),
             is_error,
         });
+    }
+
+    fn toggle_theme(&mut self) {
+        self.theme = match self.theme {
+            ThemePreference::Dark => ThemePreference::Light,
+            ThemePreference::Light => ThemePreference::Dark,
+        };
+        if let Err(err) = storage::write_theme(self.theme) {
+            self.status = Some(format!("Theme save failed: {err}"));
+            self.set_toast("Theme save failed.", true);
+        } else {
+            let label = match self.theme {
+                ThemePreference::Dark => "Dark mode",
+                ThemePreference::Light => "Light mode",
+            };
+            self.status = Some(format!("Theme set to {label}."));
+            self.set_toast(format!("{label} enabled."), false);
+        }
     }
 }
 

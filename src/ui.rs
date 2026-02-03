@@ -7,33 +7,40 @@ use ratatui::widgets::{
 use ratatui::Frame;
 
 use crate::app::{App, DateInputMode, Mode};
+use crate::storage::ThemePreference;
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let size = frame.size();
-    draw_background(frame, size);
-    draw_dashboard(frame, app, size);
+    let theme = theme_from(app.theme);
+    draw_background(frame, size, &theme);
+    draw_dashboard(frame, app, size, &theme);
 
     match app.mode {
-        Mode::Loading => draw_overlay(frame, size, "Loading data from Toggl..."),
-        Mode::Error => draw_overlay(frame, size, app.status.as_deref().unwrap_or("Unknown error")),
-        Mode::Login => draw_login(frame, app, size),
-        Mode::WorkspaceSelect => draw_workspace_select(frame, app, size),
-        Mode::DateInput(mode) => draw_date_input(frame, app, size, mode),
+        Mode::Loading => draw_overlay(frame, size, "Loading data from Toggl...", &theme),
+        Mode::Error => draw_overlay(
+            frame,
+            size,
+            app.status.as_deref().unwrap_or("Unknown error"),
+            &theme,
+        ),
+        Mode::Login => draw_login(frame, app, size, &theme),
+        Mode::WorkspaceSelect => draw_workspace_select(frame, app, size, &theme),
+        Mode::DateInput(mode) => draw_date_input(frame, app, size, mode, &theme),
         Mode::Dashboard => {}
     }
 
     if matches!(app.mode, Mode::Dashboard) {
         if let Some(toast) = app.active_toast() {
-            draw_toast(frame, size, &toast.message, toast.is_error);
+            draw_toast(frame, size, &toast.message, toast.is_error, &theme);
         }
     }
 
     if app.show_help {
-        draw_help(frame, size);
+        draw_help(frame, size, &theme);
     }
 }
 
-fn draw_dashboard(frame: &mut Frame, app: &mut App, area: Rect) {
+fn draw_dashboard(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
     let content = area.inner(&Margin {
         vertical: 1,
         horizontal: 2,
@@ -44,14 +51,14 @@ fn draw_dashboard(frame: &mut Frame, app: &mut App, area: Rect) {
         .constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(2)])
         .split(content);
 
-    let header = header_line(app);
+    let header = header_line(app, theme);
     let header_block = Paragraph::new(header)
         .alignment(Alignment::Left)
         .block(
             Block::default()
                 .borders(Borders::BOTTOM)
-                .border_style(border_style())
-                .style(panel_style()),
+                .border_style(theme.border_style())
+                .style(theme.panel_style()),
         );
     frame.render_widget(header_block, chunks[0]);
 
@@ -68,19 +75,19 @@ fn draw_dashboard(frame: &mut Frame, app: &mut App, area: Rect) {
                 Span::styled(&group.name, Style::default().add_modifier(Modifier::BOLD)),
                 Span::styled(
                     format!("  {:.2}h", group.total_hours),
-                    muted_style(),
+                    theme.muted_style(),
                 ),
             ]);
-            ListItem::new(line).style(panel_style())
+            ListItem::new(line).style(theme.panel_style())
         })
         .collect();
 
     let project_list = List::new(project_items)
-        .block(panel_block("Projects"))
+        .block(panel_block("Projects", theme))
         .highlight_style(
             Style::default()
-                .bg(ACCENT)
-                .fg(Color::Black)
+                .bg(theme.accent)
+                .fg(theme.accent_contrast())
                 .add_modifier(Modifier::BOLD),
         )
         .highlight_symbol("▍ ");
@@ -96,33 +103,33 @@ fn draw_dashboard(frame: &mut Frame, app: &mut App, area: Rect) {
                     Span::raw(&entry.description),
                     Span::styled(
                         format!("  {:.2}h", entry.total_hours),
-                        muted_style(),
+                        theme.muted_style(),
                     ),
                 ]))
-                .style(panel_style())
+                .style(theme.panel_style())
             })
             .collect()
     } else {
-        vec![ListItem::new(Line::from("No entries")).style(panel_style())]
+        vec![ListItem::new(Line::from("No entries")).style(theme.panel_style())]
     };
 
-    let entries_block = List::new(entry_items).block(panel_block("Entries"));
+    let entries_block = List::new(entry_items).block(panel_block("Entries", theme));
 
     frame.render_widget(entries_block, body[1]);
 
-    let footer = footer_line(app);
+    let footer = footer_line(app, theme);
     let footer_block = Paragraph::new(footer)
         .alignment(Alignment::Left)
         .block(
             Block::default()
                 .borders(Borders::TOP)
-                .border_style(border_style())
-                .style(panel_style()),
+                .border_style(theme.border_style())
+                .style(theme.panel_style()),
         );
     frame.render_widget(footer_block, chunks[2]);
 }
 
-fn header_line(app: &App) -> Line<'static> {
+fn header_line(app: &App, theme: &Theme) -> Line<'static> {
     let workspace = app
         .selected_workspace
         .as_ref()
@@ -133,36 +140,36 @@ fn header_line(app: &App) -> Line<'static> {
         .map(|dt| dt.format("%H:%M:%S").to_string())
         .unwrap_or_else(|| "Never".to_string());
     Line::from(vec![
-        Span::styled("Timeshit", title_style()),
+        Span::styled("Timeshit", theme.title_style()),
         Span::raw("  "),
-        Span::styled("Workspace", muted_style()),
+        Span::styled("Workspace", theme.muted_style()),
         Span::raw(": "),
         Span::styled(workspace, Style::default().add_modifier(Modifier::BOLD)),
         Span::raw("  "),
-        Span::styled("Date", muted_style()),
+        Span::styled("Date", theme.muted_style()),
         Span::raw(": "),
         Span::raw(app.date_range.label().to_string()),
         Span::raw("  "),
-        Span::styled("Last refresh", muted_style()),
+        Span::styled("Last refresh", theme.muted_style()),
         Span::raw(": "),
         Span::raw(last_refresh),
     ])
 }
 
-fn footer_line(app: &App) -> Line<'static> {
+fn footer_line(app: &App, theme: &Theme) -> Line<'static> {
     let total_style = if app.total_hours < 8.0 {
-        Style::default().fg(ERROR).add_modifier(Modifier::BOLD)
+        Style::default().fg(theme.error).add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(SUCCESS).add_modifier(Modifier::BOLD)
+        Style::default().fg(theme.success).add_modifier(Modifier::BOLD)
     };
 
     let status = app.status.clone().unwrap_or_default();
     Line::from(vec![
         Span::styled(format!("Total {:.2}h", app.total_hours), total_style),
         Span::raw("   "),
-        Span::styled("h help", muted_style()),
+        Span::styled("h help", theme.muted_style()),
         Span::raw(" · "),
-        Span::styled("q quit", muted_style()),
+        Span::styled("q quit", theme.muted_style()),
         if status.is_empty() {
             Span::raw("")
         } else {
@@ -171,17 +178,17 @@ fn footer_line(app: &App) -> Line<'static> {
     ])
 }
 
-fn draw_overlay(frame: &mut Frame, area: Rect, message: &str) {
+fn draw_overlay(frame: &mut Frame, area: Rect, message: &str, theme: &Theme) {
     let block = centered_rect(60, 20, area);
     frame.render_widget(Clear, block);
     let paragraph = Paragraph::new(message)
         .alignment(Alignment::Center)
-        .block(panel_block("Status"))
+        .block(panel_block("Status", theme))
         .wrap(Wrap { trim: true });
     frame.render_widget(paragraph, block);
 }
 
-fn draw_login(frame: &mut Frame, app: &App, area: Rect) {
+fn draw_login(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
     let block = centered_rect(70, 30, area);
     frame.render_widget(Clear, block);
     let mut lines = vec![
@@ -203,12 +210,12 @@ fn draw_login(frame: &mut Frame, app: &App, area: Rect) {
 
     let paragraph = Paragraph::new(lines)
         .alignment(Alignment::Left)
-        .block(panel_block("Login"))
+        .block(panel_block("Login", theme))
         .wrap(Wrap { trim: true });
     frame.render_widget(paragraph, block);
 }
 
-fn draw_workspace_select(frame: &mut Frame, app: &mut App, area: Rect) {
+fn draw_workspace_select(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
     let block = centered_rect(60, 60, area);
     frame.render_widget(Clear, block);
 
@@ -219,11 +226,11 @@ fn draw_workspace_select(frame: &mut Frame, app: &mut App, area: Rect) {
         .collect();
 
     let list = List::new(items)
-        .block(panel_block("Select Workspace"))
+        .block(panel_block("Select Workspace", theme))
         .highlight_style(
             Style::default()
-                .bg(ACCENT)
-                .fg(Color::Black)
+                .bg(theme.accent)
+                .fg(theme.accent_contrast())
                 .add_modifier(Modifier::BOLD),
         )
         .highlight_symbol("▍ ");
@@ -231,7 +238,7 @@ fn draw_workspace_select(frame: &mut Frame, app: &mut App, area: Rect) {
     frame.render_stateful_widget(list, block, &mut app.workspace_state);
 }
 
-fn draw_date_input(frame: &mut Frame, app: &App, area: Rect, mode: DateInputMode) {
+fn draw_date_input(frame: &mut Frame, app: &App, area: Rect, mode: DateInputMode, theme: &Theme) {
     let block = centered_rect(60, 30, area);
     frame.render_widget(Clear, block);
 
@@ -259,7 +266,7 @@ fn draw_date_input(frame: &mut Frame, app: &App, area: Rect, mode: DateInputMode
 
     let paragraph = Paragraph::new(lines)
         .alignment(Alignment::Left)
-        .block(panel_block("Date Filter"))
+        .block(panel_block("Date Filter", theme))
         .wrap(Wrap { trim: true });
     frame.render_widget(paragraph, block);
 }
@@ -284,7 +291,7 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
     vertical[1]
 }
 
-fn draw_toast(frame: &mut Frame, area: Rect, message: &str, is_error: bool) {
+fn draw_toast(frame: &mut Frame, area: Rect, message: &str, is_error: bool, theme: &Theme) {
     let width = (message.len() as u16 + 6).clamp(20, area.width.saturating_sub(2));
     let height = 3;
     let x = area.x + area.width.saturating_sub(width + 1);
@@ -293,22 +300,22 @@ fn draw_toast(frame: &mut Frame, area: Rect, message: &str, is_error: bool) {
 
     frame.render_widget(Clear, rect);
     let style = if is_error {
-        Style::default().fg(ERROR).add_modifier(Modifier::BOLD)
+        Style::default().fg(theme.error).add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(SUCCESS).add_modifier(Modifier::BOLD)
+        Style::default().fg(theme.success).add_modifier(Modifier::BOLD)
     };
     let paragraph = Paragraph::new(Line::from(Span::styled(message, style)))
         .alignment(Alignment::Center)
-        .block(panel_block("Copied"));
+        .block(panel_block("Copied", theme));
     frame.render_widget(paragraph, rect);
 }
 
-fn draw_help(frame: &mut Frame, area: Rect) {
+fn draw_help(frame: &mut Frame, area: Rect, theme: &Theme) {
     let block = centered_rect(70, 70, area);
     frame.render_widget(Clear, block);
 
-    let header_style = Style::default().add_modifier(Modifier::BOLD).fg(ACCENT);
-    let key_style = Style::default().fg(HIGHLIGHT);
+    let header_style = Style::default().add_modifier(Modifier::BOLD).fg(theme.accent);
+    let key_style = Style::default().fg(theme.highlight);
 
     let rows = vec![
         Row::new(vec![
@@ -363,6 +370,10 @@ fn draw_help(frame: &mut Frame, area: Rect) {
             Cell::from("Refresh"),
         ]),
         Row::new(vec![
+            Cell::from(Span::styled("m", key_style)),
+            Cell::from("Toggle theme"),
+        ]),
+        Row::new(vec![
             Cell::from(Span::styled("h / Esc", key_style)),
             Cell::from("Close help"),
         ]),
@@ -373,51 +384,94 @@ fn draw_help(frame: &mut Frame, area: Rect) {
     ];
 
     let table = Table::new(rows, [Constraint::Length(20), Constraint::Min(10)])
-        .block(panel_block("Help"))
+        .block(panel_block("Help", theme))
         .column_spacing(2);
 
     frame.render_widget(table, block);
 }
 
-fn draw_background(frame: &mut Frame, area: Rect) {
-    let block = Block::default().style(Style::default().bg(BG).fg(TEXT));
+fn draw_background(frame: &mut Frame, area: Rect, theme: &Theme) {
+    let block = Block::default().style(Style::default().bg(theme.bg).fg(theme.text));
     frame.render_widget(block, area);
 }
 
-fn panel_block(title: &str) -> Block<'static> {
+fn panel_block(title: &str, theme: &Theme) -> Block<'static> {
     Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(border_style())
-        .style(panel_style())
+        .border_style(theme.border_style())
+        .style(theme.panel_style())
         .title(Line::from(Span::styled(
             format!(" {} ", title),
-            title_style(),
+            theme.title_style(),
         )))
 }
 
-fn panel_style() -> Style {
-    Style::default().bg(PANEL).fg(TEXT)
+#[derive(Clone, Copy)]
+struct Theme {
+    bg: Color,
+    panel: Color,
+    border: Color,
+    text: Color,
+    muted: Color,
+    accent: Color,
+    highlight: Color,
+    success: Color,
+    error: Color,
+    accent_dark: Color,
 }
 
-fn border_style() -> Style {
-    Style::default().fg(BORDER)
+impl Theme {
+    fn panel_style(&self) -> Style {
+        Style::default().bg(self.panel).fg(self.text)
+    }
+
+    fn border_style(&self) -> Style {
+        Style::default().fg(self.border)
+    }
+
+    fn title_style(&self) -> Style {
+        Style::default().fg(self.accent).add_modifier(Modifier::BOLD)
+    }
+
+    fn muted_style(&self) -> Style {
+        Style::default().fg(self.muted)
+    }
+
+    fn accent_contrast(&self) -> Color {
+        if matches!(self.bg, Color::Rgb(242, 244, 248)) {
+            self.accent_dark
+        } else {
+            Color::Black
+        }
+    }
 }
 
-fn title_style() -> Style {
-    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+fn theme_from(pref: ThemePreference) -> Theme {
+    match pref {
+        ThemePreference::Dark => Theme {
+            bg: Color::Rgb(12, 18, 36),
+            panel: Color::Rgb(18, 28, 52),
+            border: Color::Rgb(44, 72, 112),
+            text: Color::Rgb(220, 230, 255),
+            muted: Color::Rgb(150, 170, 200),
+            accent: Color::Rgb(90, 180, 255),
+            highlight: Color::Rgb(255, 210, 120),
+            success: Color::Rgb(120, 220, 140),
+            error: Color::Rgb(255, 120, 120),
+            accent_dark: Color::Rgb(26, 60, 110),
+        },
+        ThemePreference::Light => Theme {
+            bg: Color::Rgb(242, 244, 248),
+            panel: Color::Rgb(255, 255, 255),
+            border: Color::Rgb(210, 220, 235),
+            text: Color::Rgb(26, 32, 44),
+            muted: Color::Rgb(90, 110, 140),
+            accent: Color::Rgb(70, 130, 235),
+            highlight: Color::Rgb(255, 165, 80),
+            success: Color::Rgb(36, 150, 90),
+            error: Color::Rgb(220, 60, 80),
+            accent_dark: Color::Rgb(18, 34, 64),
+        },
+    }
 }
-
-fn muted_style() -> Style {
-    Style::default().fg(MUTED)
-}
-
-const BG: Color = Color::Rgb(12, 18, 36);
-const PANEL: Color = Color::Rgb(18, 28, 52);
-const BORDER: Color = Color::Rgb(44, 72, 112);
-const TEXT: Color = Color::Rgb(220, 230, 255);
-const MUTED: Color = Color::Rgb(150, 170, 200);
-const ACCENT: Color = Color::Rgb(90, 180, 255);
-const HIGHLIGHT: Color = Color::Rgb(255, 210, 120);
-const SUCCESS: Color = Color::Rgb(120, 220, 140);
-const ERROR: Color = Color::Rgb(255, 120, 120);
