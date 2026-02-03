@@ -87,6 +87,8 @@ pub struct App {
     settings_categories: Vec<String>,
     settings_state: ListState,
     settings_mode: SettingsMode,
+    status_created_at: Option<Instant>,
+    last_status_snapshot: Option<String>,
     toast: Option<Toast>,
 }
 
@@ -145,6 +147,8 @@ impl App {
                 state
             },
             settings_mode: SettingsMode::SelectCategory,
+            status_created_at: None,
+            last_status_snapshot: None,
             toast: None,
         }
     }
@@ -529,23 +533,19 @@ impl App {
         match key.code {
             KeyCode::Char('q') => self.should_quit = true,
             KeyCode::Enter => {
-                let value = self.settings_input.trim();
-                let parsed: f64 = match value.parse() {
+                let parsed = match self.parse_target_hours() {
                     Ok(value) => value,
-                    Err(_) => {
-                        self.status = Some("Invalid number for target hours.".to_string());
+                    Err(message) => {
+                        self.status = Some(message);
                         return;
                     }
                 };
-                if parsed <= 0.0 {
-                    self.status = Some("Target hours must be greater than 0.".to_string());
-                    return;
-                }
                 if let Err(err) = storage::write_target_hours(parsed) {
                     self.status = Some(format!("Failed to save: {err}"));
                     return;
                 }
                 self.target_hours = parsed;
+                self.settings_input = format!("{:.2}", parsed);
                 self.status = Some("Target hours updated.".to_string());
                 self.set_toast("Target hours saved.", false);
                 self.settings_mode = SettingsMode::SelectCategory;
@@ -564,6 +564,40 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    fn parse_target_hours(&self) -> Result<f64, String> {
+        let mut value = self.settings_input.trim().to_string();
+        if value.is_empty() {
+            return Err("Target hours is required.".to_string());
+        }
+
+        if value.contains(',') && !value.contains('.') {
+            value = value.replace(',', ".");
+        }
+
+        if value.ends_with('.') {
+            return Err("Use a complete number (e.g. 8 or 8.50).".to_string());
+        }
+
+        let parts: Vec<&str> = value.split('.').collect();
+        if parts.len() > 2 {
+            return Err("Invalid number format.".to_string());
+        }
+
+        if parts.len() == 2 {
+            let decimals = parts[1];
+            if decimals.is_empty() || decimals.len() > 2 {
+                return Err("Use up to 2 decimals (e.g. 8.50).".to_string());
+            }
+        }
+
+        let parsed: f64 = value.parse().map_err(|_| "Invalid number format.".to_string())?;
+        if parsed <= 0.0 {
+            return Err("Target hours must be greater than 0.".to_string());
+        }
+
+        Ok((parsed * 100.0).round() / 100.0)
     }
 
     fn select_previous_setting_category(&mut self) {
@@ -761,6 +795,34 @@ impl App {
             message: toast.message.clone(),
             is_error: toast.is_error,
         })
+    }
+
+    pub fn visible_status(&mut self) -> Option<String> {
+        if self.status.is_none() {
+            self.status_created_at = None;
+            self.last_status_snapshot = None;
+            return None;
+        }
+
+        if self.last_status_snapshot.as_ref() != self.status.as_ref() {
+            self.status_created_at = Some(Instant::now());
+            self.last_status_snapshot = self.status.clone();
+        }
+
+        if matches!(self.mode, Mode::Error) {
+            return self.status.clone();
+        }
+
+        if let Some(created_at) = self.status_created_at {
+            if created_at.elapsed() > Duration::from_secs(4) {
+                self.status = None;
+                self.status_created_at = None;
+                self.last_status_snapshot = None;
+                return None;
+            }
+        }
+
+        self.status.clone()
     }
 
     fn set_toast(&mut self, message: impl Into<String>, is_error: bool) {

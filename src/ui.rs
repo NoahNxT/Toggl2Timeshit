@@ -157,14 +157,14 @@ fn header_line(app: &App, theme: &Theme) -> Line<'static> {
     ])
 }
 
-fn footer_line(app: &App, theme: &Theme) -> Line<'static> {
+fn footer_line(app: &mut App, theme: &Theme) -> Line<'static> {
     let total_style = if app.total_hours < app.target_hours {
         Style::default().fg(theme.error).add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(theme.success).add_modifier(Modifier::BOLD)
     };
 
-    let status = app.status.clone().unwrap_or_default();
+    let status = app.visible_status().unwrap_or_default();
     Line::from(vec![
         Span::styled(format!("Total {:.2}h", app.total_hours), total_style),
         Span::raw("   "),
@@ -427,7 +427,8 @@ fn draw_settings(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
     let categories = List::new(
         app.settings_categories()
             .iter()
-            .map(|category| ListItem::new(Line::from(category.clone())))
+            .cloned()
+            .map(|category| ListItem::new(Line::from(category)))
             .collect::<Vec<_>>(),
     )
     .block(panel_block("Categories", theme))
@@ -436,18 +437,22 @@ fn draw_settings(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
 
     frame.render_stateful_widget(categories, sections[0], app.settings_state());
 
+    let selected_category = app.settings_selected_category().to_string();
+    let settings_input = app.settings_input_value().to_string();
+    let is_editing = app.settings_is_editing();
+
     let mut lines = vec![
         Line::from(Span::styled(
-            app.settings_selected_category(),
+            selected_category,
             Style::default().add_modifier(Modifier::BOLD).fg(theme.accent),
         )),
         Line::from(""),
         Line::from(vec![
             Span::styled("Target hours: ", Style::default().add_modifier(Modifier::BOLD)),
-            if app.settings_is_editing() {
-                Span::styled(app.settings_input_value(), Style::default().fg(theme.accent))
+            if is_editing {
+                Span::styled(settings_input, Style::default().fg(theme.accent))
             } else {
-                Span::raw(app.settings_input_value())
+                Span::raw(settings_input)
             },
             Span::raw(" h"),
         ]),
@@ -455,11 +460,15 @@ fn draw_settings(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
         Line::from("Enter to edit/save • Esc back"),
     ];
 
-    if let Some(status) = &app.status {
+    if let Some(status) = app.visible_status() {
+        let is_success = status.to_lowercase().contains("updated")
+            || status.to_lowercase().contains("saved")
+            || status.to_lowercase().contains("success");
+        let color = if is_success { theme.success } else { theme.error };
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
             status,
-            Style::default().fg(theme.error),
+            Style::default().fg(color),
         )));
     }
 
