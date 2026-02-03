@@ -7,6 +7,7 @@ Toggl2Timeshit is now a Rust-based Terminal UI (TUI) that turns Toggl Track time
 - Workspace selection
 - Date filters (single day or range)
 - Total hours with visual status
+- Optional time rounding (increment + mode)
 - Secure token storage compatible with previous versions (`~/.toggl2tsc`)
 - Persistent cache to minimize Toggl API usage (manual refresh only)
 - Built-in settings for target hours and integrations
@@ -52,9 +53,15 @@ Full documentation is available via GitHub Pages (see `docs/`).
 - `c` copy client entries to clipboard
 - `v` copy project entries to clipboard
 - `x` copy all entries with project and client names to clipboard
+- `Enter` browse entries (dashboard)
+- `b` copy selected entry title (when browsing entries)
+- `n` copy selected entry hours (when browsing entries)
+- `Right`/`Tab` switch to entries (dashboard)
+- `Left`/`Shift+Tab` switch to projects (dashboard)
+- `Esc` back to projects (when browsing entries)
 - `d` set date range
 - `y` yesterday
-- Arrow keys to navigate projects
+- Arrow keys to navigate projects and entries
 
 ## License
 MIT

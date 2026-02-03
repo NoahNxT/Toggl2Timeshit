@@ -12,6 +12,7 @@ mod app;
 mod dates;
 mod grouping;
 mod models;
+mod rounding;
 mod storage;
 mod toggl;
 mod ui;

@@ -2,9 +2,16 @@
 
 ## Navigation
 - `Up/Down`: Select project
-- `Enter`: Select workspace (workspace picker)
-- `Esc`: Close modal / go back
+- `Enter`: Browse entries (dashboard) / Select workspace (workspace picker)
+- `Right` / `Tab`: Switch to entries (dashboard)
+- `Left` / `Shift+Tab`: Switch to projects (dashboard)
+- `Esc`: Back to projects (from entries) / Close modal
 - `q`: Quit
+
+## Entries (Dashboard)
+- `Up/Down`: Select entry (when browsing entries)
+- `b`: Copy selected entry title
+- `n`: Copy selected entry hours
 
 ## Dates
 - `t`: Today
@@ -31,6 +38,8 @@ Total hours: 8.00h
 - `h`: Help modal
 - `s`: Settings modal
 - `m`: Toggle light/dark theme
+
+Settings → General includes optional **time rounding** (increment + mode).
 
 ## Status & Toasts
 Short status messages appear in the footer and auto-hide after a few seconds. Copy actions also show a small toast in the dashboard.
