@@ -40,7 +40,9 @@ Recommended: Cloudsmith repo and API key for publishing `.deb` and `.rpm`.
 ### APT (Cloudsmith) setup
 1. Create a Cloudsmith account and a **Debian** repository.
 2. Add repo variable:
-   - `CLOUDSMITH_REPO` (e.g. `noahnxt/timeshit`)
+   - `CLOUDSMITH_REPO` (e.g. `nxt-solutions/timeshit`)
+   - `CLOUDSMITH_DISTRO` (e.g. `ubuntu`)
+   - `CLOUDSMITH_RELEASE` (e.g. `jammy`)
 3. Add repo secret:
    - `CLOUDSMITH_API_KEY`
 4. On release, GitHub Actions builds a `.deb` and uploads it to Cloudsmith.
