@@ -1,0 +1,96 @@
+name: 📦 Publish Packages
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  homebrew_scoop:
+    if: ${{ secrets.PACKAGES_REPO_TOKEN != '' }}
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout packages repo
+        uses: actions/checkout@v4
+        with:
+          repository: NoahNxT/nxt-solutions-packages
+          token: ${{ secrets.PACKAGES_REPO_TOKEN }}
+
+      - name: Download release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${{ github.event.release.tag_name }}"
+          gh release download "$tag" -R "${{ github.repository }}" -p "timeshit-*.tar.gz" -p "timeshit-*.zip" -D /tmp/releases
+
+      - name: Generate Homebrew formula and Scoop manifest
+        run: |
+          tag="${{ github.event.release.tag_name }}"
+          version="${tag#v}"
+          echo "VERSION=${version}" >> "$GITHUB_ENV"
+          linux_tar="/tmp/releases/timeshit-linux.tar.gz"
+          mac_tar="/tmp/releases/timeshit-macos.tar.gz"
+          win_zip="/tmp/releases/timeshit-windows.zip"
+
+          if [[ ! -f "$linux_tar" || ! -f "$mac_tar" || ! -f "$win_zip" ]]; then
+            echo "Missing release assets. Ensure the release contains timeshit-linux.tar.gz, timeshit-macos.tar.gz, and timeshit-windows.zip."
+            exit 1
+          fi
+
+          linux_sha=$(shasum -a 256 "$linux_tar" | awk '{print $1}')
+          mac_sha=$(shasum -a 256 "$mac_tar" | awk '{print $1}')
+          win_sha=$(shasum -a 256 "$win_zip" | awk '{print $1}')
+
+          mkdir -p Formula bucket
+
+          cat > Formula/timeshit.rb <<EOF
+class Timeshit < Formula
+  desc "Toggl Track to timesheet TUI"
+  homepage "https://github.com/${{ github.repository }}"
+  version "${version}"
+
+  on_macos do
+    url "https://github.com/${{ github.repository }}/releases/download/${tag}/timeshit-macos.tar.gz"
+    sha256 "${mac_sha}"
+  end
+
+  on_linux do
+    url "https://github.com/${{ github.repository }}/releases/download/${tag}/timeshit-linux.tar.gz"
+    sha256 "${linux_sha}"
+  end
+
+  def install
+    bin.install "timeshit"
+  end
+end
+EOF
+
+          cat > bucket/timeshit.json <<EOF
+{
+  "version": "${version}",
+  "description": "Toggl Track to timesheet TUI",
+  "homepage": "https://github.com/${{ github.repository }}",
+  "license": "MIT",
+  "architecture": {
+    "64bit": {
+      "url": "https://github.com/${{ github.repository }}/releases/download/${tag}/timeshit-windows.zip",
+      "hash": "${win_sha}"
+    }
+  },
+  "bin": "timeshit.exe"
+}
+EOF
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add Formula/timeshit.rb bucket/timeshit.json
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git commit -m "timeshit ${VERSION}"
+          git push
