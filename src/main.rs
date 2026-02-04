@@ -16,6 +16,7 @@ mod rounding;
 mod storage;
 mod toggl;
 mod ui;
+mod update;
 
 use app::App;
 use dates::{parse_date, DateRange};
