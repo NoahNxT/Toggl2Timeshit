@@ -782,6 +782,9 @@ impl App {
                 self.save_setting_item(item);
             }
             KeyCode::Up => match item {
+                SettingsItem::Theme => {
+                    self.cycle_theme(true);
+                }
                 SettingsItem::TimeRoundingToggle => {
                     self.settings_rounding_draft_enabled = !self.settings_rounding_draft_enabled;
                 }
@@ -794,6 +797,9 @@ impl App {
                 _ => {}
             },
             KeyCode::Down => match item {
+                SettingsItem::Theme => {
+                    self.cycle_theme(false);
+                }
                 SettingsItem::TimeRoundingToggle => {
                     self.settings_rounding_draft_enabled = !self.settings_rounding_draft_enabled;
                 }
@@ -812,6 +818,7 @@ impl App {
                 _ => {}
             },
             KeyCode::Char(ch) => match item {
+                SettingsItem::Theme => {}
                 SettingsItem::TogglToken => {
                     if !ch.is_control() {
                         self.settings_input.push(ch);
@@ -1059,6 +1066,25 @@ impl App {
                 self.rebuild_grouped();
             }
         }
+    }
+
+    fn cycle_theme(&mut self, up: bool) {
+        let values = [
+            ThemePreference::Terminal,
+            ThemePreference::Dark,
+            ThemePreference::Light,
+        ];
+        let current = self.settings_theme_draft;
+        let index = values
+            .iter()
+            .position(|value| *value == current)
+            .unwrap_or(0);
+        let next_index = if up {
+            if index == 0 { values.len() - 1 } else { index - 1 }
+        } else {
+            if index + 1 >= values.len() { 0 } else { index + 1 }
+        };
+        self.settings_theme_draft = values[next_index];
     }
 
     fn cycle_rounding_increment(&mut self, up: bool) {
