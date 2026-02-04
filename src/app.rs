@@ -214,7 +214,99 @@ impl App {
             Mode::WorkspaceSelect => self.handle_workspace_input(key),
             Mode::DateInput(mode) => self.handle_date_input(mode, key),
             Mode::Settings => self.handle_settings_input(key),
+            Mode::UpdatePrompt => self.handle_update_prompt_input(key),
+            Mode::Updating => {}
             Mode::Dashboard | Mode::Loading | Mode::Error => self.handle_dashboard_input(key),
+        }
+    }
+
+    pub fn needs_update_check(&self) -> bool {
+        self.needs_update_check
+    }
+
+    pub fn needs_update_install(&self) -> bool {
+        self.needs_update_install
+    }
+
+    pub fn is_update_blocking(&self) -> bool {
+        matches!(self.mode, Mode::UpdatePrompt | Mode::Updating)
+    }
+
+    pub fn take_exit_message(&mut self) -> Option<String> {
+        self.exit_message.take()
+    }
+
+    pub fn check_for_update(&mut self) {
+        if !self.needs_update_check {
+            return;
+        }
+        self.needs_update_check = false;
+        self.update_error = None;
+
+        match update::check_for_update() {
+            Ok(Some(info)) => {
+                self.update_info = Some(info);
+                self.update_resume_mode = Some(self.mode);
+                self.mode = Mode::UpdatePrompt;
+                self.status = None;
+            }
+            Ok(None) => {}
+            Err(err) => {
+                let message = format!("Update check failed: {err}");
+                self.status = Some(message.clone());
+                self.set_toast(message, true);
+            }
+        }
+    }
+
+    pub fn perform_update(&mut self) {
+        if !self.needs_update_install {
+            return;
+        }
+        self.needs_update_install = false;
+
+        let info = match self.update_info.clone() {
+            Some(info) => info,
+            None => {
+                self.handle_update_failure("Update info missing.".to_string());
+                return;
+            }
+        };
+
+        let current_exe = match std::env::current_exe() {
+            Ok(path) => path,
+            Err(err) => {
+                self.handle_update_failure(format!(
+                    "Failed to locate current binary: {err}"
+                ));
+                return;
+            }
+        };
+
+        let staged_path = match update::download_and_extract(&info) {
+            Ok(path) => path,
+            Err(err) => {
+                self.handle_update_failure(err.to_string());
+                return;
+            }
+        };
+
+        let install_result = update::install_update(&staged_path, &current_exe);
+        if !cfg!(windows) {
+            update::cleanup_staged(&staged_path);
+        }
+
+        match install_result {
+            Ok(()) => {
+                self.exit_message = Some(format!(
+                    "Updated to v{}. Please relaunch.",
+                    info.latest
+                ));
+                self.should_quit = true;
+            }
+            Err(err) => {
+                self.handle_update_failure(err.to_string());
+            }
         }
     }
 
@@ -392,6 +484,42 @@ impl App {
                 self.status = Some(message);
             }
         }
+    }
+
+    fn handle_update_prompt_input(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Char('u') | KeyCode::Enter => self.start_update(),
+            KeyCode::Char('q') | KeyCode::Esc => self.should_quit = true,
+            _ => {}
+        }
+    }
+
+    fn start_update(&mut self) {
+        self.mode = Mode::Updating;
+        self.needs_update_install = true;
+        self.update_error = None;
+    }
+
+    fn resume_from_update(&mut self) {
+        if let Some(mode) = self.update_resume_mode.take() {
+            self.mode = mode;
+            return;
+        }
+
+        if self.token.is_some() {
+            self.mode = Mode::Loading;
+            self.needs_refresh = true;
+        } else {
+            self.mode = Mode::Login;
+        }
+    }
+
+    fn handle_update_failure(&mut self, message: String) {
+        self.update_error = Some(message.clone());
+        let status = format!("Update failed: {message}");
+        self.status = Some(status.clone());
+        self.set_toast("Update failed; continuing without update.", true);
+        self.resume_from_update();
     }
 
     fn handle_dashboard_input(&mut self, key: KeyEvent) {
