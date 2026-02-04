@@ -17,6 +17,18 @@ Toggl2Timeshit is now a Rust-based Terminal UI (TUI) that turns Toggl Track time
 ### GitHub Releases
 Download the latest release binary for your OS and place it in your PATH.
 
+### Homebrew (macOS/Linux)
+```bash
+brew tap NoahNxT/nxt-solutions-packages
+brew install timeshit
+```
+
+### Scoop (Windows)
+```powershell
+scoop bucket add nxt-solutions https://github.com/NoahNxT/nxt-solutions-packages
+scoop install timeshit
+```
+
 ### Build from Source
 ```bash
 cargo build --release
