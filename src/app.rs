@@ -69,6 +69,7 @@ pub enum SettingsFocus {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsItem {
+    Theme,
     TargetHours,
     TimeRoundingToggle,
     RoundingIncrement,
@@ -122,6 +123,7 @@ pub struct App {
     settings_edit_item: Option<SettingsItem>,
     settings_rounding_draft: RoundingConfig,
     settings_rounding_draft_enabled: bool,
+    settings_theme_draft: ThemePreference,
     status_created_at: Option<Instant>,
     last_status_snapshot: Option<String>,
     toast: Option<Toast>,
@@ -202,6 +204,7 @@ impl App {
             settings_edit_item: None,
             settings_rounding_draft: RoundingConfig::default(),
             settings_rounding_draft_enabled: false,
+            settings_theme_draft: theme,
             status_created_at: None,
             last_status_snapshot: None,
             toast: None,
@@ -916,6 +919,7 @@ impl App {
         self.settings_items = match self.settings_selected_category() {
             "Integrations" => vec![SettingsItem::TogglToken],
             _ => vec![
+                SettingsItem::Theme,
                 SettingsItem::TargetHours,
                 SettingsItem::TimeRoundingToggle,
                 SettingsItem::RoundingIncrement,
@@ -938,6 +942,9 @@ impl App {
         };
 
         match item {
+            SettingsItem::Theme => {
+                self.settings_theme_draft = self.theme;
+            }
             SettingsItem::TargetHours => {
                 self.settings_input = format!("{:.2}", self.target_hours);
             }
@@ -1189,6 +1196,16 @@ impl App {
             };
         }
         self.rounding
+    }
+
+    pub fn settings_theme_display(&self) -> ThemePreference {
+        if self.settings_focus == SettingsFocus::Edit
+            && self.settings_edit_item == Some(SettingsItem::Theme)
+        {
+            self.settings_theme_draft
+        } else {
+            self.theme
+        }
     }
 
     fn select_previous_project(&mut self) {
