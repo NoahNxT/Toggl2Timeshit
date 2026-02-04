@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 use crate::dates::{parse_date, DateRange};
 use crate::grouping::{group_entries, GroupedEntry, GroupedProject};
 use crate::models::{Client as TogglClientModel, Project, TimeEntry, Workspace};
+use crate::rollups::{build_rollups, DailyTotal, PeriodRollup, Rollups};
 use crate::rounding::{RoundingConfig, RoundingMode};
 use crate::storage::{
     self, CacheFile, CachedData, QuotaFile, ThemePreference,
@@ -21,6 +22,7 @@ const CALL_LIMIT: u32 = 30;
 pub enum Mode {
     Loading,
     Dashboard,
+    Rollups,
     Login,
     WorkspaceSelect,
     DateInput(DateInputMode),
@@ -34,6 +36,18 @@ pub enum Mode {
 pub enum DashboardFocus {
     Projects,
     Entries,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RollupView {
+    Weekly,
+    Monthly,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RollupFocus {
+    Periods,
+    Days,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -96,6 +110,12 @@ pub struct App {
     pub total_hours: f64,
     pub project_state: ListState,
     pub entry_state: ListState,
+    pub rollups: Rollups,
+    pub rollup_view: RollupView,
+    pub rollup_focus: RollupFocus,
+    pub rollup_week_state: ListState,
+    pub rollup_month_state: ListState,
+    pub rollup_day_state: ListState,
     pub last_refresh: Option<DateTime<Local>>,
     pub show_help: bool,
     pub theme: ThemePreference,
@@ -149,6 +169,12 @@ impl App {
         project_state.select(Some(0));
         let mut workspace_state = ListState::default();
         workspace_state.select(Some(0));
+        let mut rollup_week_state = ListState::default();
+        rollup_week_state.select(Some(0));
+        let mut rollup_month_state = ListState::default();
+        rollup_month_state.select(Some(0));
+        let mut rollup_day_state = ListState::default();
+        rollup_day_state.select(Some(0));
 
         App {
             should_quit: false,
@@ -169,6 +195,12 @@ impl App {
             total_hours: 0.0,
             project_state,
             entry_state: ListState::default(),
+            rollups: Rollups::default(),
+            rollup_view: RollupView::Weekly,
+            rollup_focus: RollupFocus::Periods,
+            rollup_week_state,
+            rollup_month_state,
+            rollup_day_state,
             last_refresh: None,
             show_help: false,
             theme,
@@ -219,6 +251,7 @@ impl App {
             Mode::Settings => self.handle_settings_input(key),
             Mode::UpdatePrompt => self.handle_update_prompt_input(key),
             Mode::Updating => {}
+            Mode::Rollups => self.handle_rollups_input(key),
             Mode::Dashboard | Mode::Loading | Mode::Error => self.handle_dashboard_input(key),
         }
     }
@@ -445,6 +478,13 @@ impl App {
         self.client_names = client_names;
         self.grouped = grouped;
         self.total_hours = total_hours;
+        self.rollups = build_rollups(
+            &self.time_entries,
+            self.date_range.start_date(),
+            self.date_range.end_date(),
+            self.rounding.as_ref(),
+        );
+        self.ensure_rollup_selections();
         self.last_refresh = if allow_api && cache_reason.is_none() {
             Some(Local::now())
         } else {
@@ -547,6 +587,7 @@ impl App {
             KeyCode::Char('h') => self.show_help = true,
             KeyCode::Char('m') | KeyCode::Char('M') => self.toggle_theme(),
             KeyCode::Char('s') => self.enter_settings(),
+            KeyCode::Char('o') | KeyCode::Char('O') => self.enter_rollups(),
             KeyCode::Char('d') => self.enter_date_input(DateInputMode::Range),
             KeyCode::Char('c') | KeyCode::Char('C') => self.copy_client_entries_to_clipboard(),
             KeyCode::Char('v') | KeyCode::Char('V') => self.copy_project_entries_to_clipboard(),
@@ -576,6 +617,39 @@ impl App {
             KeyCode::Down => match self.dashboard_focus {
                 DashboardFocus::Projects => self.select_next_project(),
                 DashboardFocus::Entries => self.select_next_entry(),
+            },
+            _ => {}
+        }
+    }
+
+    fn handle_rollups_input(&mut self, key: KeyEvent) {
+        if self.show_help {
+            match key.code {
+                KeyCode::Char('h') | KeyCode::Esc => {
+                    self.show_help = false;
+                }
+                KeyCode::Char('q') => self.should_quit = true,
+                _ => {}
+            }
+            return;
+        }
+
+        match key.code {
+            KeyCode::Char('q') => self.should_quit = true,
+            KeyCode::Esc => self.exit_rollups(),
+            KeyCode::Char('h') => self.show_help = true,
+            KeyCode::Char('w') | KeyCode::Char('W') => self.set_rollup_view(RollupView::Weekly),
+            KeyCode::Char('m') | KeyCode::Char('M') => self.set_rollup_view(RollupView::Monthly),
+            KeyCode::Left => self.set_rollup_focus(RollupFocus::Periods),
+            KeyCode::Right => self.set_rollup_focus(RollupFocus::Days),
+            KeyCode::Tab => self.toggle_rollup_focus(),
+            KeyCode::Up => match self.rollup_focus {
+                RollupFocus::Periods => self.select_previous_rollup_period(),
+                RollupFocus::Days => self.select_previous_rollup_day(),
+            },
+            KeyCode::Down => match self.rollup_focus {
+                RollupFocus::Periods => self.select_next_rollup_period(),
+                RollupFocus::Days => self.select_next_rollup_day(),
             },
             _ => {}
         }
@@ -706,6 +780,17 @@ impl App {
         self.sync_settings_items_for_category();
         self.mode = Mode::Settings;
         self.status = None;
+    }
+
+    fn enter_rollups(&mut self) {
+        self.rollup_focus = RollupFocus::Periods;
+        self.ensure_rollup_selections();
+        self.mode = Mode::Rollups;
+        self.status = None;
+    }
+
+    fn exit_rollups(&mut self) {
+        self.mode = Mode::Dashboard;
     }
 
     fn trigger_refresh(&mut self) {
@@ -898,6 +983,13 @@ impl App {
 
         self.grouped = grouped;
         self.total_hours = total_hours;
+        self.rollups = build_rollups(
+            &self.time_entries,
+            self.date_range.start_date(),
+            self.date_range.end_date(),
+            self.rounding.as_ref(),
+        );
+        self.ensure_rollup_selections();
 
         if let Some((client_name, project_name)) = selected_project_key {
             if let Some(index) = self
@@ -1377,6 +1469,164 @@ impl App {
             selected + 1
         };
         self.entry_state.select(Some(new_index));
+    }
+
+    fn set_rollup_view(&mut self, view: RollupView) {
+        if self.rollup_view == view {
+            return;
+        }
+        self.rollup_view = view;
+        self.ensure_rollup_selections();
+    }
+
+    fn set_rollup_focus(&mut self, focus: RollupFocus) {
+        self.rollup_focus = focus;
+    }
+
+    fn toggle_rollup_focus(&mut self) {
+        self.rollup_focus = match self.rollup_focus {
+            RollupFocus::Periods => RollupFocus::Days,
+            RollupFocus::Days => RollupFocus::Periods,
+        };
+    }
+
+    fn rollup_periods(&self) -> &[PeriodRollup] {
+        match self.rollup_view {
+            RollupView::Weekly => &self.rollups.weekly,
+            RollupView::Monthly => &self.rollups.monthly,
+        }
+    }
+
+    fn rollup_periods_for_view(&self, view: RollupView) -> &[PeriodRollup] {
+        match view {
+            RollupView::Weekly => &self.rollups.weekly,
+            RollupView::Monthly => &self.rollups.monthly,
+        }
+    }
+
+    fn rollup_state_for_view_mut(&mut self, view: RollupView) -> &mut ListState {
+        match view {
+            RollupView::Weekly => &mut self.rollup_week_state,
+            RollupView::Monthly => &mut self.rollup_month_state,
+        }
+    }
+
+    fn rollup_state_for_view(&self, view: RollupView) -> &ListState {
+        match view {
+            RollupView::Weekly => &self.rollup_week_state,
+            RollupView::Monthly => &self.rollup_month_state,
+        }
+    }
+
+    pub fn rollup_selected_period(&self) -> Option<&PeriodRollup> {
+        let index = self.rollup_state_for_view(self.rollup_view).selected()?;
+        self.rollup_periods().get(index)
+    }
+
+    pub fn rollup_daily_for_selected_period(&self) -> Vec<&DailyTotal> {
+        let Some(period) = self.rollup_selected_period() else {
+            return Vec::new();
+        };
+        self.rollups
+            .daily
+            .iter()
+            .filter(|day| day.date >= period.start && day.date <= period.end)
+            .collect()
+    }
+
+    fn ensure_rollup_state_for_view(&mut self, view: RollupView) {
+        let len = self.rollup_periods_for_view(view).len();
+        let state = self.rollup_state_for_view_mut(view);
+        if len == 0 {
+            state.select(None);
+            return;
+        }
+        let selected = state.selected().unwrap_or(0).min(len - 1);
+        state.select(Some(selected));
+    }
+
+    fn ensure_rollup_day_selection(&mut self) {
+        let count = self.rollup_selected_period().map(|period| period.days).unwrap_or(0);
+        if count == 0 {
+            self.rollup_day_state.select(None);
+            return;
+        }
+        let selected = self.rollup_day_state.selected().unwrap_or(0);
+        self.rollup_day_state
+            .select(Some(selected.min(count - 1)));
+    }
+
+    fn ensure_rollup_selections(&mut self) {
+        self.ensure_rollup_state_for_view(RollupView::Weekly);
+        self.ensure_rollup_state_for_view(RollupView::Monthly);
+        self.ensure_rollup_day_selection();
+    }
+
+    fn reset_rollup_day_selection(&mut self) {
+        let count = self.rollup_selected_period().map(|period| period.days).unwrap_or(0);
+        if count == 0 {
+            self.rollup_day_state.select(None);
+        } else {
+            self.rollup_day_state.select(Some(0));
+        }
+    }
+
+    fn select_previous_rollup_period(&mut self) {
+        let len = self.rollup_periods().len();
+        if len == 0 {
+            return;
+        }
+        let state = self.rollup_state_for_view_mut(self.rollup_view);
+        let selected = state.selected().unwrap_or(0);
+        let new_index = if selected == 0 {
+            len - 1
+        } else {
+            selected - 1
+        };
+        state.select(Some(new_index));
+        self.reset_rollup_day_selection();
+    }
+
+    fn select_next_rollup_period(&mut self) {
+        let len = self.rollup_periods().len();
+        if len == 0 {
+            return;
+        }
+        let state = self.rollup_state_for_view_mut(self.rollup_view);
+        let selected = state.selected().unwrap_or(0);
+        let new_index = if selected + 1 >= len {
+            0
+        } else {
+            selected + 1
+        };
+        state.select(Some(new_index));
+        self.reset_rollup_day_selection();
+    }
+
+    fn rollup_days_len(&self) -> usize {
+        self.rollup_selected_period().map(|period| period.days).unwrap_or(0)
+    }
+
+    fn select_previous_rollup_day(&mut self) {
+        let count = self.rollup_days_len();
+        if count == 0 {
+            self.rollup_day_state.select(None);
+            return;
+        }
+        let selected = self.rollup_day_state.selected().unwrap_or(0);
+        let new_index = if selected == 0 { count - 1 } else { selected - 1 };
+        self.rollup_day_state.select(Some(new_index));
+    }
+
+    fn select_next_rollup_day(&mut self) {
+        let count = self.rollup_days_len();
+        if count == 0 {
+            self.rollup_day_state.select(None);
+            return;
+        }
+        let selected = self.rollup_day_state.selected().unwrap_or(0);
+        let new_index = if selected + 1 >= count { 0 } else { selected + 1 };
+        self.rollup_day_state.select(Some(new_index));
     }
 
     fn copy_entry_title_to_clipboard(&mut self) {
