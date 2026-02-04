@@ -3,15 +3,27 @@ name: 📦 Publish Packages
 on:
   release:
     types: [published]
+  workflow_run:
+    workflows: ["🔖 Release TUI"]
+    types: [completed]
 
 permissions:
   contents: read
 
 jobs:
   homebrew_scoop:
-    if: ${{ secrets.PACKAGES_REPO_TOKEN != '' }}
+    if: ${{ secrets.PACKAGES_REPO_TOKEN != '' && (github.event_name == 'release' || github.event.workflow_run.conclusion == 'success') }}
     runs-on: ubuntu-22.04
     steps:
+      - name: Resolve release tag
+        run: |
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            echo "RELEASE_TAG=${{ github.event.release.tag_name }}" >> "$GITHUB_ENV"
+          else
+            tag=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases/latest | python -c "import sys, json; print(json.load(sys.stdin)['tag_name'])")
+            echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
+          fi
+
       - name: Checkout packages repo
         uses: actions/checkout@v4
         with:
@@ -22,12 +34,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          tag="${{ github.event.release.tag_name }}"
-          gh release download "$tag" -R "${{ github.repository }}" -p "timeshit-*.tar.gz" -p "timeshit-*.zip" -D /tmp/releases
+          gh release download "$RELEASE_TAG" -R "${{ github.repository }}" -p "timeshit-*.tar.gz" -p "timeshit-*.zip" -D /tmp/releases
 
       - name: Generate Homebrew formula and Scoop manifest
         run: |
-          tag="${{ github.event.release.tag_name }}"
+          tag="${RELEASE_TAG}"
           version="${tag#v}"
           echo "VERSION=${version}" >> "$GITHUB_ENV"
           linux_tar="/tmp/releases/timeshit-linux.tar.gz"

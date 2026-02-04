@@ -3,26 +3,46 @@ name: 🍫 Publish Chocolatey
 on:
   release:
     types: [published]
+  workflow_run:
+    workflows: ["🔖 Release TUI"]
+    types: [completed]
 
 permissions:
   contents: read
 
 jobs:
   chocolatey:
-    if: ${{ secrets.CHOCOLATEY_API_KEY != '' }}
+    if: ${{ secrets.CHOCOLATEY_API_KEY != '' && (github.event_name == 'release' || github.event.workflow_run.conclusion == 'success') }}
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release tag
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "release") {
+            $tag = "${{ github.event.release.tag_name }}"
+          } else {
+            $tag = (Invoke-RestMethod -Uri "https://api.github.com/repos/${{ github.repository }}/releases/latest").tag_name
+          }
+          "RELEASE_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Append
+          $version = $tag.TrimStart("v")
+          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Checkout release tag
+        shell: pwsh
+        run: |
+          git fetch --tags
+          git checkout $env:RELEASE_TAG
 
       - name: Download Windows release asset
         shell: pwsh
         run: |
-          $tag = "${{ github.event.release.tag_name }}"
-          $version = $tag.TrimStart("v")
-          $url = "https://github.com/${{ github.repository }}/releases/download/$tag/timeshit-windows.zip"
+          $url = "https://github.com/${{ github.repository }}/releases/download/$env:RELEASE_TAG/timeshit-windows.zip"
           Invoke-WebRequest -Uri $url -OutFile timeshit-windows.zip
           $hash = (Get-FileHash timeshit-windows.zip -Algorithm SHA256).Hash.ToLower()
-          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
           "CHECKSUM=$hash" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Prepare Chocolatey package

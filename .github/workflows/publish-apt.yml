@@ -3,15 +3,35 @@ name: 🐧 Publish APT (Cloudsmith)
 on:
   release:
     types: [published]
+  workflow_run:
+    workflows: ["🔖 Release TUI"]
+    types: [completed]
 
 permissions:
   contents: read
 
 jobs:
   apt:
+    if: ${{ github.event_name == 'release' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release tag
+        run: |
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            echo "RELEASE_TAG=${{ github.event.release.tag_name }}" >> "$GITHUB_ENV"
+          else
+            tag=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases/latest | python -c "import sys, json; print(json.load(sys.stdin)['tag_name'])")
+            echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
+          fi
+
+      - name: Checkout release tag
+        run: |
+          git fetch --tags
+          git checkout "$RELEASE_TAG"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
