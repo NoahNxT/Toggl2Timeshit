@@ -17,3 +17,11 @@ Workflow file:
 - Builds release binaries for **Linux, macOS, Windows**.
 - Creates a GitHub Release with tag `v<version>`.
 - Attaches packaged binaries to the release.
+
+## Release Assets
+The workflow publishes:
+- `timeshit-linux.tar.gz`
+- `timeshit-macos.tar.gz`
+- `timeshit-windows.zip`
+
+These assets are consumed by the Homebrew and Scoop automation.

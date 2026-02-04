@@ -27,7 +27,7 @@ jobs:
           mkdir -p dist
           if [[ "$RUNNER_OS" == "Windows" ]]; then
             cp target/release/timeshit.exe dist/
-            tar -czf dist/timeshit-Windows.tar.gz -C dist timeshit.exe
+            (cd dist && zip -q timeshit-windows.zip timeshit.exe)
           else
             cp target/release/timeshit dist/timeshit-${RUNNER_OS}
             tar -czf dist/timeshit-${RUNNER_OS}.tar.gz -C dist timeshit-${RUNNER_OS}
