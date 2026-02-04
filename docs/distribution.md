@@ -34,8 +34,13 @@ On each release, a GitHub Action packs and pushes `timeshit.<version>.nupkg`.
 ## Winget (Windows)
 Requires a GitHub token to open PRs against `microsoft/winget-pkgs`.
 
-## Snap (Linux)
-Requires a Snapcraft account + API token.
+## Flatpak (Linux)
+Requires a Flathub account and a Flathub repo submission (first submission is manual).
+
+### Flatpak setup (manual first submission)
+1. Choose a Flatpak App ID (e.g. `io.github.NoahNxT.Timeshit`).
+2. Submit to Flathub (requires a PR to `flathub/flathub`).
+3. After first submission, we can automate updates.
 
 ## APT / RPM (Linux)
 Recommended: Cloudsmith repo and API key for publishing `.deb` and `.rpm`.
