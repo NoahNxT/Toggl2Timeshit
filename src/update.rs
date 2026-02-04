@@ -7,15 +7,17 @@ mod enabled {
     use std::env;
     use std::fs::{self, File};
     use std::io;
+    use std::path::PathBuf;
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
     use std::time::Duration;
     use tar::Archive;
     use tempfile::Builder;
+    use zip::ZipArchive;
 
     const RELEASES_URL: &str =
-        "https://api.github.com/repos/NoahNxT/Toggl2Timesheet/releases/latest";
+        "https://api.github.com/repos/NoahNxT/Toggl2Timeshit/releases/latest";
 
     #[derive(Debug, Clone)]
     pub struct UpdateInfo {
@@ -73,6 +75,10 @@ mod enabled {
             if path.contains("/target/") || path.contains("\\target\\") {
                 return false;
             }
+        }
+
+        if is_managed_install() {
+            return false;
         }
 
         true
@@ -149,11 +155,19 @@ mod enabled {
 
         let archive_file =
             File::open(&archive_path).map_err(|err| UpdateError::Io(err.to_string()))?;
-        let decoder = GzDecoder::new(archive_file);
-        let mut archive = Archive::new(decoder);
-        archive
-            .unpack(tempdir.path())
-            .map_err(|err| UpdateError::Io(err.to_string()))?;
+        if info.asset_name.ends_with(".zip") {
+            let mut archive =
+                ZipArchive::new(archive_file).map_err(|err| UpdateError::Io(err.to_string()))?;
+            archive
+                .extract(tempdir.path())
+                .map_err(|err| UpdateError::Io(err.to_string()))?;
+        } else {
+            let decoder = GzDecoder::new(archive_file);
+            let mut archive = Archive::new(decoder);
+            archive
+                .unpack(tempdir.path())
+                .map_err(|err| UpdateError::Io(err.to_string()))?;
+        }
 
         let binary_name = expected_binary_name()?;
         let extracted_path = find_extracted_binary(tempdir.path(), &binary_name)?;
@@ -201,9 +215,9 @@ mod enabled {
 
     fn expected_asset_name() -> Result<String, UpdateError> {
         let asset = match env::consts::OS {
-            "linux" => "timeshit-Linux.tar.gz",
-            "macos" => "timeshit-macOS.tar.gz",
-            "windows" => "timeshit-Windows.tar.gz",
+            "linux" => "timeshit-linux.tar.gz",
+            "macos" => "timeshit-macos.tar.gz",
+            "windows" => "timeshit-windows.zip",
             other => {
                 return Err(UpdateError::Unsupported(format!(
                     "Unsupported OS: {other}"
@@ -215,8 +229,8 @@ mod enabled {
 
     fn expected_binary_name() -> Result<String, UpdateError> {
         let binary = match env::consts::OS {
-            "linux" => "timeshit-Linux",
-            "macos" => "timeshit-macOS",
+            "linux" => "timeshit",
+            "macos" => "timeshit",
             "windows" => "timeshit.exe",
             other => {
                 return Err(UpdateError::Unsupported(format!(
@@ -248,6 +262,37 @@ mod enabled {
         Err(UpdateError::Parse(format!(
             "Extracted binary {expected} not found"
         )))
+    }
+
+    fn is_managed_install() -> bool {
+        let exe = match std::env::current_exe() {
+            Ok(path) => path,
+            Err(_) => return false,
+        };
+        let canonical = fs::canonicalize(&exe).unwrap_or(exe);
+        let path_str = canonical.to_string_lossy().to_lowercase();
+
+        if path_str.contains("/cellar/") || path_str.contains("\\cellar\\") {
+            return true;
+        }
+
+        if path_str.contains("\\chocolatey\\lib\\")
+            || path_str.contains("\\chocolatey\\bin\\")
+            || path_str.contains("\\scoop\\apps\\")
+            || path_str.contains("\\windowsapps\\")
+        {
+            return true;
+        }
+
+        if cfg!(target_os = "linux") {
+            if Path::new("/var/lib/dpkg/info/timeshit.list").exists()
+                || Path::new("/usr/share/doc/timeshit").exists()
+            {
+                return true;
+            }
+        }
+
+        false
     }
 
     #[cfg(unix)]
