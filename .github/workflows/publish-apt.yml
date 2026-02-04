@@ -9,13 +9,19 @@ permissions:
 
 jobs:
   apt:
-    if: ${{ secrets.CLOUDSMITH_API_KEY != '' && vars.CLOUDSMITH_REPO != '' }}
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Guard missing Cloudsmith config
+        run: |
+          if [[ -z "${{ secrets.CLOUDSMITH_API_KEY }}" || -z "${{ vars.CLOUDSMITH_REPO }}" ]]; then
+            echo "CLOUDSMITH_API_KEY or CLOUDSMITH_REPO not set; skipping."
+            exit 0
+          fi
 
       - name: Build release
         run: cargo build --release
