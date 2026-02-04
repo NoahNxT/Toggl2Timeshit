@@ -980,6 +980,19 @@ impl App {
 
     fn save_setting_item(&mut self, item: SettingsItem) {
         match item {
+            SettingsItem::Theme => {
+                let next = self.settings_theme_draft;
+                if let Err(err) = storage::write_theme(next) {
+                    self.status = Some(format!("Theme save failed: {err}"));
+                    return;
+                }
+                self.theme = next;
+                let label = theme_label(next);
+                self.status = Some(format!("Theme set to {label}."));
+                self.set_toast(format!("Theme set to {label}."), false);
+                self.settings_edit_item = None;
+                self.settings_focus = SettingsFocus::Items;
+            }
             SettingsItem::TargetHours => {
                 let parsed = match self.parse_target_hours() {
                     Ok(value) => value,

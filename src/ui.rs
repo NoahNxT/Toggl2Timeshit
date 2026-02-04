@@ -566,6 +566,10 @@ fn draw_settings(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
         .copied()
         .map(|item| {
             let (label, value, disabled) = match item {
+                SettingsItem::Theme => {
+                    let theme = app.settings_theme_display();
+                    ("Theme", theme_label(theme).to_string(), false)
+                }
                 SettingsItem::TargetHours => {
                     let value = if is_editing && editing_item == Some(SettingsItem::TargetHours) {
                         app.settings_input_value().to_string()
@@ -635,6 +639,7 @@ fn draw_settings(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
         SettingsFocus::Items => "Up/Down select • Enter edit • Esc categories",
         SettingsFocus::Edit => match editing_item {
             Some(SettingsItem::TargetHours) | Some(SettingsItem::TogglToken) => "Enter save • Esc cancel",
+            Some(SettingsItem::Theme) => "Up/Down change • Enter save • Esc cancel",
             Some(SettingsItem::TimeRoundingToggle)
             | Some(SettingsItem::RoundingIncrement)
             | Some(SettingsItem::RoundingMode) => "Up/Down change • Enter save • Esc cancel",
