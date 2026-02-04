@@ -59,6 +59,21 @@ pub fn current_version() -> Version {
         .expect("CARGO_PKG_VERSION should be a valid semantic version")
 }
 
+pub fn should_check_updates() -> bool {
+    if cfg!(debug_assertions) {
+        return false;
+    }
+
+    if let Ok(path) = std::env::current_exe() {
+        let path = path.to_string_lossy();
+        if path.contains("/target/") || path.contains("\\target\\") {
+            return false;
+        }
+    }
+
+    true
+}
+
 pub fn check_for_update() -> Result<Option<UpdateInfo>, UpdateError> {
     let client = build_client()?;
     let response = client

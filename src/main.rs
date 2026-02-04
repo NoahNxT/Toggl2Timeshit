@@ -87,7 +87,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut terminal = Terminal::new(backend)?;
     terminal.clear()?;
 
-    let needs_update_check = cli.command.is_none();
+    let needs_update_check = cli.command.is_none() && update::should_check_updates();
     let mut app = App::new(date_range, force_login, needs_update_check);
 
     loop {
