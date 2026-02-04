@@ -56,3 +56,12 @@ Other managers can be added once credentials/accounts are available.
 1. Create a PAT with **repo** access to `NoahNxT/nxt-solutions-packages`.
 2. Add it as a secret in this repo: `PACKAGES_REPO_TOKEN`.
 3. Run a release (`🔖 Release TUI`). The publish workflow will update the formula and Scoop manifest.
+
+### Winget automation setup
+1. Fork `microsoft/winget-pkgs` to your account.
+2. Create a PAT with **public_repo** scope and add it as `WINGET_TOKEN`.
+3. Set repo variables:
+   - `WINGET_PACKAGE_ID` (`NxTSolutions.Timeshit`)
+   - `WINGET_PACKAGE_NAME` (e.g. `Timeshit`)
+4. Submit the **first** Winget manifest manually (required by Winget).
+5. Releases will auto-open PRs for updates.
