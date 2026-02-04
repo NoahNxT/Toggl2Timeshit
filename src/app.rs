@@ -12,6 +12,7 @@ use crate::storage::{
     self, CacheFile, CachedData, QuotaFile, ThemePreference,
 };
 use crate::toggl::{TogglClient, TogglError};
+use crate::update::{self, UpdateInfo};
 use arboard::Clipboard;
 
 const CALL_LIMIT: u32 = 30;
@@ -25,6 +26,8 @@ pub enum Mode {
     DateInput(DateInputMode),
     Settings,
     Error,
+    UpdatePrompt,
+    Updating,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -96,11 +99,17 @@ pub struct App {
     pub show_help: bool,
     pub theme: ThemePreference,
     pub target_hours: f64,
+    pub update_info: Option<UpdateInfo>,
+    pub update_error: Option<String>,
     pub rounding: Option<RoundingConfig>,
     token_hash: Option<String>,
     cache: Option<CacheFile>,
     quota: QuotaFile,
     refresh_intent: RefreshIntent,
+    update_resume_mode: Option<Mode>,
+    needs_update_check: bool,
+    needs_update_install: bool,
+    exit_message: Option<String>,
     date_start_input: String,
     date_end_input: String,
     date_active_field: DateField,
@@ -119,7 +128,7 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(date_range: DateRange, force_login: bool) -> Self {
+    pub fn new(date_range: DateRange, force_login: bool, needs_update_check: bool) -> Self {
         let token = if force_login {
             None
         } else {
@@ -162,11 +171,17 @@ impl App {
             show_help: false,
             theme,
             target_hours,
+            update_info: None,
+            update_error: None,
             rounding,
             token_hash,
             cache,
             quota,
             refresh_intent: RefreshIntent::CacheOnly,
+            update_resume_mode: None,
+            needs_update_check,
+            needs_update_install: false,
+            exit_message: None,
             date_start_input: String::new(),
             date_end_input: String::new(),
             date_active_field: DateField::Start,
