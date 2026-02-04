@@ -1,0 +1,39 @@
+name: 🐧 Publish APT (Cloudsmith)
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  apt:
+    if: ${{ secrets.CLOUDSMITH_API_KEY != '' && vars.CLOUDSMITH_REPO != '' }}
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release
+        run: cargo build --release
+
+      - name: Install cargo-deb
+        run: cargo install cargo-deb --locked
+
+      - name: Build .deb package
+        run: cargo deb --no-build
+
+      - name: Upload to Cloudsmith
+        env:
+          CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_API_KEY }}
+          CLOUDSMITH_REPO: ${{ vars.CLOUDSMITH_REPO }}
+        run: |
+          deb=$(ls target/debian/*.deb | head -n 1)
+          echo "Uploading $deb to $CLOUDSMITH_REPO"
+          curl -X POST \
+            -H "X-Api-Key: $CLOUDSMITH_API_KEY" \
+            -F "package=@${deb}" \
+            "https://api.cloudsmith.io/v1/packages/${CLOUDSMITH_REPO}/upload/"

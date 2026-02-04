@@ -17,6 +17,17 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 ratatui = "0.30.0"
 reqwest = { version = "0.13.1", features = ["blocking", "json"] }
+
+[package.metadata.deb]
+maintainer = "NoahNxT <noahnxt@users.noreply.github.com>"
+depends = "libc6 (>= 2.28)"
+section = "utils"
+priority = "optional"
+assets = [
+  ["target/release/timeshit", "usr/bin/timeshit", "755"],
+  ["README.md", "usr/share/doc/timeshit/README.md", "644"],
+  ["LICENSE", "usr/share/doc/timeshit/LICENSE", "644"],
+]
 semver = "1.0.25"
 flate2 = "1.0.35"
 tar = "0.4.41"

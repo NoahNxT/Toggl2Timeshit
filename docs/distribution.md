@@ -34,16 +34,16 @@ On each release, a GitHub Action packs and pushes `timeshit.<version>.nupkg`.
 ## Winget (Windows)
 Requires a GitHub token to open PRs against `microsoft/winget-pkgs`.
 
-## Flatpak (Linux)
-Requires a Flathub account and a Flathub repo submission (first submission is manual).
-
-### Flatpak setup (manual first submission)
-1. Choose a Flatpak App ID (e.g. `io.github.NoahNxT.Timeshit`).
-2. Submit to Flathub (requires a PR to `flathub/flathub`).
-3. After first submission, we can automate updates.
-
 ## APT / RPM (Linux)
 Recommended: Cloudsmith repo and API key for publishing `.deb` and `.rpm`.
+
+### APT (Cloudsmith) setup
+1. Create a Cloudsmith account and a **Debian** repository.
+2. Add repo variable:
+   - `CLOUDSMITH_REPO` (e.g. `noahnxt/timeshit`)
+3. Add repo secret:
+   - `CLOUDSMITH_API_KEY`
+4. On release, GitHub Actions builds a `.deb` and uploads it to Cloudsmith.
 
 ## AUR (Arch)
 Requires AUR account and an SSH key for pushing package updates.
