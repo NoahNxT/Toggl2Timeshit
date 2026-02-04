@@ -19,6 +19,14 @@
 - `d`: Open date range modal
 - `Tab`: Switch between start/end in date range modal
 
+## Rollups
+- `o`: Open rollups view
+- `w`: Weekly rollups
+- `m`: Monthly rollups
+- `Tab`: Switch focus between periods and days
+- `Up/Down`: Navigate periods or days
+- `Esc`: Back to dashboard
+
 ## Clipboard
 - `c`: Copy **all entries for the selected client**
 - `v`: Copy **entries for the selected project**

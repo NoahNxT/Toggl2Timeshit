@@ -1,3 +1,4 @@
+use chrono::{Datelike, Duration, NaiveDate};
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Margin, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -5,8 +6,12 @@ use ratatui::widgets::{
     Block, BorderType, Borders, Cell, Clear, List, ListItem, Paragraph, Row, Table, Wrap,
 };
 use ratatui::Frame;
+use std::collections::HashMap;
 
-use crate::app::{App, DashboardFocus, DateInputMode, Mode, SettingsFocus, SettingsItem};
+use crate::app::{
+    App, DashboardFocus, DateInputMode, Mode, RollupFocus, RollupView, SettingsFocus, SettingsItem,
+};
+use crate::rollups::{DailyTotal, PeriodRollup};
 use crate::storage::ThemePreference;
 use crate::update;
 
@@ -14,7 +19,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let size = frame.area();
     let theme = theme_from(app.theme);
     draw_background(frame, size, &theme);
-    draw_dashboard(frame, app, size, &theme);
+    if matches!(app.mode, Mode::Rollups) {
+        draw_rollups(frame, app, size, &theme);
+    } else {
+        draw_dashboard(frame, app, size, &theme);
+    }
 
     match app.mode {
         Mode::Loading => draw_overlay(frame, size, "Loading data from Toggl...", &theme),
@@ -30,10 +39,10 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         Mode::DateInput(mode) => draw_date_input(frame, app, size, mode, &theme),
         Mode::Settings => draw_settings(frame, app, size, &theme),
         Mode::UpdatePrompt => draw_update_prompt(frame, app, size, &theme),
-        Mode::Dashboard => {}
+        Mode::Dashboard | Mode::Rollups => {}
     }
 
-    if matches!(app.mode, Mode::Dashboard) && !app.show_help {
+    if matches!(app.mode, Mode::Dashboard | Mode::Rollups) && !app.show_help {
         if let Some(toast) = app.active_toast() {
             draw_toast(frame, size, &toast.message, toast.is_error, &theme);
         }
@@ -195,6 +204,237 @@ fn draw_dashboard(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
     frame.render_widget(footer_block, chunks[2]);
 }
 
+fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
+    let content = area.inner(Margin {
+        vertical: 1,
+        horizontal: 2,
+    });
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(2)])
+        .split(content);
+
+    let header = rollups_header_line(app, theme);
+    let header_block = Paragraph::new(header)
+        .alignment(Alignment::Left)
+        .block(
+            Block::default()
+                .borders(Borders::BOTTOM)
+                .border_style(theme.border_style())
+                .style(theme.panel_style()),
+        );
+    frame.render_widget(header_block, chunks[0]);
+
+    let body = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(35), Constraint::Percentage(65)])
+        .split(chunks[1]);
+
+    let periods = match app.rollup_view {
+        RollupView::Weekly => &app.rollups.weekly,
+        RollupView::Monthly => &app.rollups.monthly,
+    };
+
+    let period_items: Vec<ListItem> = if periods.is_empty() {
+        vec![ListItem::new(Line::from("No rollup data")).style(theme.panel_style())]
+    } else {
+        periods
+            .iter()
+            .map(|period| {
+                let hours = hours_from_seconds(period.seconds);
+                let target = app.target_hours * period.days as f64;
+                let delta = normalize_delta(hours - target);
+                let delta_style = delta_style(delta, theme);
+                let line = Line::from(vec![
+                    Span::styled(&period.label, Style::default().add_modifier(Modifier::BOLD)),
+                    Span::raw("  "),
+                    Span::styled(format!("{:.2}h", hours), theme.muted_style()),
+                    Span::styled(format!("  {:+.2}h", delta), delta_style),
+                ]);
+                ListItem::new(line).style(theme.panel_style())
+            })
+            .collect()
+    };
+
+    let active_highlight = Style::default()
+        .bg(theme.accent)
+        .fg(theme.accent_contrast())
+        .add_modifier(Modifier::BOLD);
+    let inactive_highlight = Style::default()
+        .fg(theme.highlight)
+        .add_modifier(Modifier::BOLD);
+
+    let (period_highlight_style, period_highlight_symbol) = match app.rollup_focus {
+        RollupFocus::Periods => (active_highlight, "▍ "),
+        RollupFocus::Days => (inactive_highlight, "▏ "),
+    };
+
+    let period_title = match app.rollup_view {
+        RollupView::Weekly => "Weeks",
+        RollupView::Monthly => "Months",
+    };
+
+    let period_list = List::new(period_items)
+        .block(panel_block(period_title, theme))
+        .highlight_style(period_highlight_style)
+        .highlight_symbol(period_highlight_symbol);
+
+    match app.rollup_view {
+        RollupView::Weekly => frame.render_stateful_widget(
+            period_list,
+            body[0],
+            &mut app.rollup_week_state,
+        ),
+        RollupView::Monthly => frame.render_stateful_widget(
+            period_list,
+            body[0],
+            &mut app.rollup_month_state,
+        ),
+    };
+
+    let right_sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(8), Constraint::Min(0)])
+        .split(body[1]);
+
+    let daily = app.rollup_daily_for_selected_period();
+    let selected_day = app
+        .rollup_day_state
+        .selected()
+        .and_then(|index| daily.get(index).copied());
+
+    let summary_lines = if let Some(period) = app.rollup_selected_period() {
+        let total_hours = hours_from_seconds(period.seconds);
+        let target_hours = app.target_hours * period.days as f64;
+        let delta = normalize_delta(total_hours - target_hours);
+        let avg = if period.days > 0 {
+            total_hours / period.days as f64
+        } else {
+            0.0
+        };
+        let mut lines = vec![
+            Line::from(Span::styled(
+                period.label.clone(),
+                Style::default().add_modifier(Modifier::BOLD),
+            )),
+            Line::from(format!("Total: {:.2}h", total_hours)),
+            Line::from(format!(
+                "Target: {:.2}h ({} days × {:.2})",
+                target_hours, period.days, app.target_hours
+            )),
+            Line::from(vec![
+                Span::raw("Delta: "),
+                Span::styled(format!("{:+.2}h", delta), delta_style(delta, theme)),
+            ]),
+            Line::from(format!("Avg/day: {:.2}h", avg)),
+        ];
+
+        if let Some(day) = selected_day {
+            let hours = hours_from_seconds(day.seconds);
+            let day_delta = normalize_delta(hours - app.target_hours);
+            let label = day.date.format("%a %Y-%m-%d").to_string();
+            lines.push(Line::from(vec![
+                Span::raw(format!("Selected: {label} ")),
+                Span::styled(format!("{:.2}h", hours), theme.muted_style()),
+                Span::raw(" "),
+                Span::styled(format!("{:+.2}h", day_delta), delta_style(day_delta, theme)),
+            ]));
+        }
+
+        lines
+    } else {
+        vec![Line::from("No rollup data.")]
+    };
+
+    let summary = Paragraph::new(summary_lines)
+        .alignment(Alignment::Left)
+        .block(panel_block("Summary", theme))
+        .wrap(Wrap { trim: true });
+    frame.render_widget(summary, right_sections[0]);
+
+    let calendar_lines = if let Some(period) = app.rollup_selected_period() {
+        build_calendar_lines(
+            &daily,
+            period,
+            selected_day.map(|day| day.date),
+            app.rollup_focus,
+            app.target_hours,
+            theme,
+        )
+    } else {
+        vec![Line::from("No days")]
+    };
+
+    let calendar = Paragraph::new(calendar_lines)
+        .alignment(Alignment::Left)
+        .block(panel_block("Calendar", theme))
+        .wrap(Wrap { trim: false });
+    frame.render_widget(calendar, right_sections[1]);
+
+    let footer = rollups_footer_line(app, theme);
+    let footer_block = Paragraph::new(footer)
+        .alignment(Alignment::Left)
+        .block(
+            Block::default()
+                .borders(Borders::TOP)
+                .border_style(theme.border_style())
+                .style(theme.panel_style()),
+        );
+    frame.render_widget(footer_block, chunks[2]);
+}
+
+fn rollups_header_line(app: &App, theme: &Theme) -> Line<'static> {
+    let workspace = app
+        .selected_workspace
+        .as_ref()
+        .map(|w| w.name.clone())
+        .unwrap_or_else(|| "No workspace".to_string());
+    let view_label = match app.rollup_view {
+        RollupView::Weekly => "Weekly",
+        RollupView::Monthly => "Monthly",
+    };
+    Line::from(vec![
+        Span::styled("Rollups", theme.title_style()),
+        Span::raw("  "),
+        Span::styled("Workspace", theme.muted_style()),
+        Span::raw(": "),
+        Span::styled(workspace, Style::default().add_modifier(Modifier::BOLD)),
+        Span::raw("  "),
+        Span::styled("View", theme.muted_style()),
+        Span::raw(": "),
+        Span::styled(view_label, Style::default().add_modifier(Modifier::BOLD)),
+        Span::raw("  "),
+        Span::styled("Date", theme.muted_style()),
+        Span::raw(": "),
+        Span::raw(app.date_range.label().to_string()),
+    ])
+}
+
+fn rollups_footer_line(app: &mut App, theme: &Theme) -> Line<'static> {
+    let status = app.visible_status().unwrap_or_default();
+    Line::from(vec![
+        Span::styled("Tab focus", theme.muted_style()),
+        Span::raw(" · "),
+        Span::styled("Up/Down move", theme.muted_style()),
+        Span::raw(" · "),
+        Span::styled("w weekly", theme.muted_style()),
+        Span::raw(" · "),
+        Span::styled("m monthly", theme.muted_style()),
+        Span::raw(" · "),
+        Span::styled("h help", theme.muted_style()),
+        Span::raw(" · "),
+        Span::styled("Esc back", theme.muted_style()),
+        Span::raw(" · "),
+        Span::styled("q quit", theme.muted_style()),
+        if status.is_empty() {
+            Span::raw("")
+        } else {
+            Span::raw(format!("   |   {}", status))
+        },
+    ])
+}
+
 fn header_line(app: &App, theme: &Theme) -> Line<'static> {
     let workspace = app
         .selected_workspace
@@ -234,6 +474,8 @@ fn footer_line(app: &mut App, theme: &Theme) -> Line<'static> {
         Span::styled(format!("Total {:.2}h", app.total_hours), total_style),
         Span::raw("   "),
         Span::styled("h help", theme.muted_style()),
+        Span::raw(" · "),
+        Span::styled("o rollups", theme.muted_style()),
         Span::raw(" · "),
         Span::styled("s settings", theme.muted_style()),
         Span::raw(" · "),
@@ -391,6 +633,137 @@ fn draw_toast(frame: &mut Frame, area: Rect, message: &str, is_error: bool, them
     frame.render_widget(paragraph, rect);
 }
 
+fn hours_from_seconds(seconds: i64) -> f64 {
+    seconds as f64 / 3600.0
+}
+
+fn normalize_delta(value: f64) -> f64 {
+    if value.abs() < 0.005 {
+        0.0
+    } else {
+        value
+    }
+}
+
+fn delta_style(value: f64, theme: &Theme) -> Style {
+    if value > 0.0 {
+        Style::default().fg(theme.success)
+    } else if value < 0.0 {
+        Style::default().fg(theme.error)
+    } else {
+        Style::default().fg(theme.muted)
+    }
+}
+
+fn build_calendar_lines(
+    daily: &[&DailyTotal],
+    period: &PeriodRollup,
+    selected_date: Option<NaiveDate>,
+    focus: RollupFocus,
+    target_hours: f64,
+    theme: &Theme,
+) -> Vec<Line<'static>> {
+    let mut map: HashMap<NaiveDate, i64> = HashMap::new();
+    for day in daily {
+        map.insert(day.date, day.seconds);
+    }
+
+    let cell_width = 7;
+    let mut lines = Vec::new();
+    let header_labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    let mut header_spans = Vec::new();
+    for (index, label) in header_labels.iter().enumerate() {
+        let text = format!("{:^width$}", label, width = cell_width);
+        header_spans.push(Span::styled(text, theme.muted_style()));
+        if index < header_labels.len() - 1 {
+            header_spans.push(Span::raw(" "));
+        }
+    }
+    lines.push(Line::from(header_spans));
+
+    let mut week_cells: Vec<Option<NaiveDate>> = Vec::new();
+    let mut current = period.start;
+    let offset = current.weekday().num_days_from_monday() as usize;
+    for _ in 0..offset {
+        week_cells.push(None);
+    }
+
+    while current <= period.end {
+        week_cells.push(Some(current));
+        if week_cells.len() == 7 {
+            lines.push(calendar_week_line(
+                &week_cells,
+                &map,
+                selected_date,
+                focus,
+                target_hours,
+                theme,
+                cell_width,
+            ));
+            week_cells.clear();
+        }
+        current = current.succ_opt().unwrap_or(current + Duration::days(1));
+    }
+
+    if !week_cells.is_empty() {
+        while week_cells.len() < 7 {
+            week_cells.push(None);
+        }
+        lines.push(calendar_week_line(
+            &week_cells,
+            &map,
+            selected_date,
+            focus,
+            target_hours,
+            theme,
+            cell_width,
+        ));
+    }
+
+    lines
+}
+
+fn calendar_week_line(
+    week_cells: &[Option<NaiveDate>],
+    map: &HashMap<NaiveDate, i64>,
+    selected_date: Option<NaiveDate>,
+    focus: RollupFocus,
+    target_hours: f64,
+    theme: &Theme,
+    cell_width: usize,
+) -> Line<'static> {
+    let mut spans = Vec::new();
+    for (index, cell) in week_cells.iter().enumerate() {
+        let span = match cell {
+            Some(date) => {
+                let seconds = *map.get(date).unwrap_or(&0);
+                let hours = hours_from_seconds(seconds);
+                let delta = normalize_delta(hours - target_hours);
+                let label = format!("{:>2} {:>4.1}", date.day(), hours);
+                if Some(*date) == selected_date {
+                    let highlight = if matches!(focus, RollupFocus::Days) {
+                        Style::default()
+                            .bg(theme.accent)
+                            .fg(theme.accent_contrast())
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(theme.highlight).add_modifier(Modifier::BOLD)
+                    };
+                    Span::styled(label, highlight)
+                } else {
+                    Span::styled(label, delta_style(delta, theme))
+                }
+            }
+            None => Span::raw(format!("{:width$}", "", width = cell_width)),
+        };
+        spans.push(span);
+        if index < week_cells.len() - 1 {
+            spans.push(Span::raw(" "));
+        }
+    }
+    Line::from(spans)
+}
+
 fn draw_help(frame: &mut Frame, area: Rect, theme: &Theme) {
     let block = centered_rect(70, 70, area);
     frame.render_widget(Clear, block);
@@ -460,6 +833,31 @@ fn draw_help(frame: &mut Frame, area: Rect, theme: &Theme) {
         Row::new(vec![
             Cell::from(Span::styled("Tab", key_style)),
             Cell::from("Switch range field"),
+        ]),
+        Row::new(vec![Cell::from(""), Cell::from("")]),
+        Row::new(vec![
+            Cell::from(Span::styled("Rollups", header_style)),
+            Cell::from(""),
+        ]),
+        Row::new(vec![
+            Cell::from(Span::styled("o", key_style)),
+            Cell::from("Open rollups view"),
+        ]),
+        Row::new(vec![
+            Cell::from(Span::styled("w / m", key_style)),
+            Cell::from("Weekly / monthly view"),
+        ]),
+        Row::new(vec![
+            Cell::from(Span::styled("Up/Down", key_style)),
+            Cell::from("Move selection"),
+        ]),
+        Row::new(vec![
+            Cell::from(Span::styled("Tab", key_style)),
+            Cell::from("Switch focus"),
+        ]),
+        Row::new(vec![
+            Cell::from(Span::styled("Esc", key_style)),
+            Cell::from("Back to dashboard"),
         ]),
         Row::new(vec![Cell::from(""), Cell::from("")]),
         Row::new(vec![
