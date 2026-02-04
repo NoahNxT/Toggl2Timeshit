@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+  <metadata>
+    <id>timeshit</id>
+    <version>0.0.0</version>
+    <title>Timeshit</title>
+    <authors>NoahNxT</authors>
+    <owners>NoahNxT</owners>
+    <projectUrl>https://github.com/NoahNxT/Toggl2Timeshit</projectUrl>
+    <projectSourceUrl>https://github.com/NoahNxT/Toggl2Timeshit</projectSourceUrl>
+    <docsUrl>https://noahnxt.github.io/Toggl2Timeshit/</docsUrl>
+    <bugTrackerUrl>https://github.com/NoahNxT/Toggl2Timeshit/issues</bugTrackerUrl>
+    <licenseUrl>https://github.com/NoahNxT/Toggl2Timeshit/blob/main/LICENSE</licenseUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <description>Toggl Track to timesheet TUI.</description>
+    <summary>Modern Rust TUI for Toggl Track timesheets.</summary>
+    <tags>toggl tui timesheet rust terminal</tags>
+  </metadata>
+  <files>
+    <file src="tools\**" target="tools" />
+  </files>
+</package>

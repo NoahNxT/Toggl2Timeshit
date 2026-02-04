@@ -1,0 +1,43 @@
+name: 🍫 Publish Chocolatey
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  chocolatey:
+    if: ${{ secrets.CHOCOLATEY_API_KEY != '' }}
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Windows release asset
+        shell: pwsh
+        run: |
+          $tag = "${{ github.event.release.tag_name }}"
+          $version = $tag.TrimStart("v")
+          $url = "https://github.com/${{ github.repository }}/releases/download/$tag/timeshit-windows.zip"
+          Invoke-WebRequest -Uri $url -OutFile timeshit-windows.zip
+          $hash = (Get-FileHash timeshit-windows.zip -Algorithm SHA256).Hash.ToLower()
+          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "CHECKSUM=$hash" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Prepare Chocolatey package
+        shell: pwsh
+        run: |
+          $install = Get-Content packaging/chocolatey/tools/chocolateyinstall.ps1 -Raw
+          $install = $install.Replace('@VERSION@', $env:VERSION).Replace('@CHECKSUM@', $env:CHECKSUM)
+          $install | Set-Content packaging/chocolatey/tools/chocolateyinstall.ps1
+
+      - name: Pack
+        shell: pwsh
+        run: |
+          choco pack packaging/chocolatey/timeshit.nuspec --version $env:VERSION
+
+      - name: Push
+        shell: pwsh
+        run: |
+          choco push "timeshit.$env:VERSION.nupkg" --api-key ${{ secrets.CHOCOLATEY_API_KEY }} --source https://push.chocolatey.org/
