@@ -8,6 +8,7 @@ use ratatui::Frame;
 
 use crate::app::{App, DashboardFocus, DateInputMode, Mode, SettingsFocus, SettingsItem};
 use crate::storage::ThemePreference;
+use crate::update;
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let size = frame.area();
@@ -23,10 +24,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             app.status.as_deref().unwrap_or("Unknown error"),
             &theme,
         ),
+        Mode::Updating => draw_overlay(frame, size, "Installing update...", &theme),
         Mode::Login => draw_login(frame, app, size, &theme),
         Mode::WorkspaceSelect => draw_workspace_select(frame, app, size, &theme),
         Mode::DateInput(mode) => draw_date_input(frame, app, size, mode, &theme),
         Mode::Settings => draw_settings(frame, app, size, &theme),
+        Mode::UpdatePrompt => draw_update_prompt(frame, app, size, &theme),
         Mode::Dashboard => {}
     }
 
@@ -39,6 +42,48 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     if app.show_help {
         draw_help(frame, size, &theme);
     }
+}
+
+fn draw_update_prompt(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
+    let block = centered_rect(70, 35, area);
+    frame.render_widget(Clear, block);
+
+    let current = update::current_version();
+    let (latest, tag) = app
+        .update_info
+        .as_ref()
+        .map(|info| (format!("v{}", info.latest), info.tag.clone()))
+        .unwrap_or_else(|| ("unknown".to_string(), "unknown".to_string()));
+
+    let mut lines = vec![
+        Line::from(Span::styled(
+            "Update Available",
+            Style::default()
+                .add_modifier(Modifier::BOLD)
+                .fg(theme.accent),
+        )),
+        Line::from(""),
+        Line::from(format!("Current version: v{}", current)),
+        Line::from(format!("Latest version:  {}", latest)),
+        Line::from(format!("Release tag:     {}", tag)),
+        Line::from(""),
+        Line::from("This update is required to continue."),
+        Line::from("Press u to update now, q to quit."),
+    ];
+
+    if let Some(error) = app.update_error.as_ref() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            error,
+            Style::default().fg(Color::Red),
+        )));
+    }
+
+    let paragraph = Paragraph::new(lines)
+        .alignment(Alignment::Left)
+        .block(panel_block("Update Required", theme))
+        .wrap(Wrap { trim: true });
+    frame.render_widget(paragraph, block);
 }
 
 fn draw_dashboard(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
@@ -521,6 +566,10 @@ fn draw_settings(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
         .copied()
         .map(|item| {
             let (label, value, disabled) = match item {
+                SettingsItem::Theme => {
+                    let theme = app.settings_theme_display();
+                    ("Theme", theme_label(theme).to_string(), false)
+                }
                 SettingsItem::TargetHours => {
                     let value = if is_editing && editing_item == Some(SettingsItem::TargetHours) {
                         app.settings_input_value().to_string()
@@ -590,6 +639,7 @@ fn draw_settings(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
         SettingsFocus::Items => "Up/Down select • Enter edit • Esc categories",
         SettingsFocus::Edit => match editing_item {
             Some(SettingsItem::TargetHours) | Some(SettingsItem::TogglToken) => "Enter save • Esc cancel",
+            Some(SettingsItem::Theme) => "Up/Down change • Enter save • Esc cancel",
             Some(SettingsItem::TimeRoundingToggle)
             | Some(SettingsItem::RoundingIncrement)
             | Some(SettingsItem::RoundingMode) => "Up/Down change • Enter save • Esc cancel",
@@ -692,6 +742,18 @@ impl Theme {
 
 fn theme_from(pref: ThemePreference) -> Theme {
     match pref {
+        ThemePreference::Terminal => Theme {
+            bg: Color::Reset,
+            panel: Color::Reset,
+            border: Color::DarkGray,
+            text: Color::Reset,
+            muted: Color::DarkGray,
+            accent: Color::Blue,
+            highlight: Color::Yellow,
+            success: Color::Green,
+            error: Color::Red,
+            accent_dark: Color::Black,
+        },
         ThemePreference::Dark => Theme {
             bg: Color::Rgb(12, 18, 36),
             panel: Color::Rgb(18, 28, 52),
@@ -716,5 +778,13 @@ fn theme_from(pref: ThemePreference) -> Theme {
             error: Color::Rgb(220, 60, 80),
             accent_dark: Color::Rgb(18, 34, 64),
         },
+    }
+}
+
+fn theme_label(theme: ThemePreference) -> &'static str {
+    match theme {
+        ThemePreference::Terminal => "Terminal",
+        ThemePreference::Dark => "Midnight",
+        ThemePreference::Light => "Snow",
     }
 }

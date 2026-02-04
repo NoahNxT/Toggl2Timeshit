@@ -12,6 +12,7 @@ use crate::storage::{
     self, CacheFile, CachedData, QuotaFile, ThemePreference,
 };
 use crate::toggl::{TogglClient, TogglError};
+use crate::update::{self, UpdateInfo};
 use arboard::Clipboard;
 
 const CALL_LIMIT: u32 = 30;
@@ -25,6 +26,8 @@ pub enum Mode {
     DateInput(DateInputMode),
     Settings,
     Error,
+    UpdatePrompt,
+    Updating,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,6 +69,7 @@ pub enum SettingsFocus {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsItem {
+    Theme,
     TargetHours,
     TimeRoundingToggle,
     RoundingIncrement,
@@ -96,11 +100,17 @@ pub struct App {
     pub show_help: bool,
     pub theme: ThemePreference,
     pub target_hours: f64,
+    pub update_info: Option<UpdateInfo>,
+    pub update_error: Option<String>,
     pub rounding: Option<RoundingConfig>,
     token_hash: Option<String>,
     cache: Option<CacheFile>,
     quota: QuotaFile,
     refresh_intent: RefreshIntent,
+    update_resume_mode: Option<Mode>,
+    needs_update_check: bool,
+    needs_update_install: bool,
+    exit_message: Option<String>,
     date_start_input: String,
     date_end_input: String,
     date_active_field: DateField,
@@ -113,20 +123,21 @@ pub struct App {
     settings_edit_item: Option<SettingsItem>,
     settings_rounding_draft: RoundingConfig,
     settings_rounding_draft_enabled: bool,
+    settings_theme_draft: ThemePreference,
     status_created_at: Option<Instant>,
     last_status_snapshot: Option<String>,
     toast: Option<Toast>,
 }
 
 impl App {
-    pub fn new(date_range: DateRange, force_login: bool) -> Self {
+    pub fn new(date_range: DateRange, force_login: bool, needs_update_check: bool) -> Self {
         let token = if force_login {
             None
         } else {
             storage::read_token()
         };
         let mode = if token.is_some() { Mode::Loading } else { Mode::Login };
-        let theme = storage::read_theme().unwrap_or(ThemePreference::Dark);
+        let theme = storage::read_theme().unwrap_or(ThemePreference::Terminal);
         let target_hours = storage::read_target_hours().unwrap_or(8.0);
         let rounding = storage::read_rounding();
         let token_hash = token.as_ref().map(|value| storage::hash_token(value));
@@ -162,11 +173,17 @@ impl App {
             show_help: false,
             theme,
             target_hours,
+            update_info: None,
+            update_error: None,
             rounding,
             token_hash,
             cache,
             quota,
             refresh_intent: RefreshIntent::CacheOnly,
+            update_resume_mode: None,
+            needs_update_check,
+            needs_update_install: false,
+            exit_message: None,
             date_start_input: String::new(),
             date_end_input: String::new(),
             date_active_field: DateField::Start,
@@ -187,6 +204,7 @@ impl App {
             settings_edit_item: None,
             settings_rounding_draft: RoundingConfig::default(),
             settings_rounding_draft_enabled: false,
+            settings_theme_draft: theme,
             status_created_at: None,
             last_status_snapshot: None,
             toast: None,
@@ -199,7 +217,99 @@ impl App {
             Mode::WorkspaceSelect => self.handle_workspace_input(key),
             Mode::DateInput(mode) => self.handle_date_input(mode, key),
             Mode::Settings => self.handle_settings_input(key),
+            Mode::UpdatePrompt => self.handle_update_prompt_input(key),
+            Mode::Updating => {}
             Mode::Dashboard | Mode::Loading | Mode::Error => self.handle_dashboard_input(key),
+        }
+    }
+
+    pub fn needs_update_check(&self) -> bool {
+        self.needs_update_check
+    }
+
+    pub fn needs_update_install(&self) -> bool {
+        self.needs_update_install
+    }
+
+    pub fn is_update_blocking(&self) -> bool {
+        matches!(self.mode, Mode::UpdatePrompt | Mode::Updating)
+    }
+
+    pub fn take_exit_message(&mut self) -> Option<String> {
+        self.exit_message.take()
+    }
+
+    pub fn check_for_update(&mut self) {
+        if !self.needs_update_check {
+            return;
+        }
+        self.needs_update_check = false;
+        self.update_error = None;
+
+        match update::check_for_update() {
+            Ok(Some(info)) => {
+                self.update_info = Some(info);
+                self.update_resume_mode = Some(self.mode);
+                self.mode = Mode::UpdatePrompt;
+                self.status = None;
+            }
+            Ok(None) => {}
+            Err(err) => {
+                let message = format!("Update check failed: {err}");
+                self.status = Some(message.clone());
+                self.set_toast(message, true);
+            }
+        }
+    }
+
+    pub fn perform_update(&mut self) {
+        if !self.needs_update_install {
+            return;
+        }
+        self.needs_update_install = false;
+
+        let info = match self.update_info.clone() {
+            Some(info) => info,
+            None => {
+                self.handle_update_failure("Update info missing.".to_string());
+                return;
+            }
+        };
+
+        let current_exe = match std::env::current_exe() {
+            Ok(path) => path,
+            Err(err) => {
+                self.handle_update_failure(format!(
+                    "Failed to locate current binary: {err}"
+                ));
+                return;
+            }
+        };
+
+        let staged_path = match update::download_and_extract(&info) {
+            Ok(path) => path,
+            Err(err) => {
+                self.handle_update_failure(err.to_string());
+                return;
+            }
+        };
+
+        let install_result = update::install_update(&staged_path, &current_exe);
+        if !cfg!(windows) {
+            update::cleanup_staged(&staged_path);
+        }
+
+        match install_result {
+            Ok(()) => {
+                self.exit_message = Some(format!(
+                    "Updated to v{}. Please relaunch.",
+                    info.latest
+                ));
+                self.should_quit = true;
+            }
+            Err(err) => {
+                self.handle_update_failure(err.to_string());
+            }
         }
     }
 
@@ -377,6 +487,42 @@ impl App {
                 self.status = Some(message);
             }
         }
+    }
+
+    fn handle_update_prompt_input(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Char('u') | KeyCode::Enter => self.start_update(),
+            KeyCode::Char('q') | KeyCode::Esc => self.should_quit = true,
+            _ => {}
+        }
+    }
+
+    fn start_update(&mut self) {
+        self.mode = Mode::Updating;
+        self.needs_update_install = true;
+        self.update_error = None;
+    }
+
+    fn resume_from_update(&mut self) {
+        if let Some(mode) = self.update_resume_mode.take() {
+            self.mode = mode;
+            return;
+        }
+
+        if self.token.is_some() {
+            self.mode = Mode::Loading;
+            self.needs_refresh = true;
+        } else {
+            self.mode = Mode::Login;
+        }
+    }
+
+    fn handle_update_failure(&mut self, message: String) {
+        self.update_error = Some(message.clone());
+        let status = format!("Update failed: {message}");
+        self.status = Some(status.clone());
+        self.set_toast("Update failed; continuing without update.", true);
+        self.resume_from_update();
     }
 
     fn handle_dashboard_input(&mut self, key: KeyEvent) {
@@ -636,6 +782,9 @@ impl App {
                 self.save_setting_item(item);
             }
             KeyCode::Up => match item {
+                SettingsItem::Theme => {
+                    self.cycle_theme(true);
+                }
                 SettingsItem::TimeRoundingToggle => {
                     self.settings_rounding_draft_enabled = !self.settings_rounding_draft_enabled;
                 }
@@ -648,6 +797,9 @@ impl App {
                 _ => {}
             },
             KeyCode::Down => match item {
+                SettingsItem::Theme => {
+                    self.cycle_theme(false);
+                }
                 SettingsItem::TimeRoundingToggle => {
                     self.settings_rounding_draft_enabled = !self.settings_rounding_draft_enabled;
                 }
@@ -666,6 +818,7 @@ impl App {
                 _ => {}
             },
             KeyCode::Char(ch) => match item {
+                SettingsItem::Theme => {}
                 SettingsItem::TogglToken => {
                     if !ch.is_control() {
                         self.settings_input.push(ch);
@@ -773,6 +926,7 @@ impl App {
         self.settings_items = match self.settings_selected_category() {
             "Integrations" => vec![SettingsItem::TogglToken],
             _ => vec![
+                SettingsItem::Theme,
                 SettingsItem::TargetHours,
                 SettingsItem::TimeRoundingToggle,
                 SettingsItem::RoundingIncrement,
@@ -795,6 +949,9 @@ impl App {
         };
 
         match item {
+            SettingsItem::Theme => {
+                self.settings_theme_draft = self.theme;
+            }
             SettingsItem::TargetHours => {
                 self.settings_input = format!("{:.2}", self.target_hours);
             }
@@ -823,6 +980,19 @@ impl App {
 
     fn save_setting_item(&mut self, item: SettingsItem) {
         match item {
+            SettingsItem::Theme => {
+                let next = self.settings_theme_draft;
+                if let Err(err) = storage::write_theme(next) {
+                    self.status = Some(format!("Theme save failed: {err}"));
+                    return;
+                }
+                self.theme = next;
+                let label = theme_label(next);
+                self.status = Some(format!("Theme set to {label}."));
+                self.set_toast(format!("Theme set to {label}."), false);
+                self.settings_edit_item = None;
+                self.settings_focus = SettingsFocus::Items;
+            }
             SettingsItem::TargetHours => {
                 let parsed = match self.parse_target_hours() {
                     Ok(value) => value,
@@ -909,6 +1079,25 @@ impl App {
                 self.rebuild_grouped();
             }
         }
+    }
+
+    fn cycle_theme(&mut self, up: bool) {
+        let values = [
+            ThemePreference::Terminal,
+            ThemePreference::Dark,
+            ThemePreference::Light,
+        ];
+        let current = self.settings_theme_draft;
+        let index = values
+            .iter()
+            .position(|value| *value == current)
+            .unwrap_or(0);
+        let next_index = if up {
+            if index == 0 { values.len() - 1 } else { index - 1 }
+        } else {
+            if index + 1 >= values.len() { 0 } else { index + 1 }
+        };
+        self.settings_theme_draft = values[next_index];
     }
 
     fn cycle_rounding_increment(&mut self, up: bool) {
@@ -1046,6 +1235,16 @@ impl App {
             };
         }
         self.rounding
+    }
+
+    pub fn settings_theme_display(&self) -> ThemePreference {
+        if self.settings_focus == SettingsFocus::Edit
+            && self.settings_edit_item == Some(SettingsItem::Theme)
+        {
+            self.settings_theme_draft
+        } else {
+            self.theme
+        }
     }
 
     fn select_previous_project(&mut self) {
@@ -1407,16 +1606,13 @@ impl App {
     fn toggle_theme(&mut self) {
         self.theme = match self.theme {
             ThemePreference::Dark => ThemePreference::Light,
-            ThemePreference::Light => ThemePreference::Dark,
+            ThemePreference::Light | ThemePreference::Terminal => ThemePreference::Dark,
         };
         if let Err(err) = storage::write_theme(self.theme) {
             self.status = Some(format!("Theme save failed: {err}"));
             self.set_toast("Theme save failed.", true);
         } else {
-            let label = match self.theme {
-                ThemePreference::Dark => "Dark mode",
-                ThemePreference::Light => "Light mode",
-            };
+            let label = theme_label(self.theme);
             self.status = Some(format!("Theme set to {label}."));
             self.set_toast(format!("{label} enabled."), false);
         }
@@ -1815,6 +2011,14 @@ fn parse_cached_time(value: &str) -> Option<DateTime<Local>> {
     DateTime::parse_from_rfc3339(value)
         .ok()
         .map(|dt| dt.with_timezone(&Local))
+}
+
+fn theme_label(theme: ThemePreference) -> &'static str {
+    match theme {
+        ThemePreference::Terminal => "Terminal",
+        ThemePreference::Dark => "Midnight",
+        ThemePreference::Light => "Snow",
+    }
 }
 
 struct Toast {

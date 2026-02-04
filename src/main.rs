@@ -16,6 +16,7 @@ mod rounding;
 mod storage;
 mod toggl;
 mod ui;
+mod update;
 
 use app::App;
 use dates::{parse_date, DateRange};
@@ -86,12 +87,21 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut terminal = Terminal::new(backend)?;
     terminal.clear()?;
 
-    let mut app = App::new(date_range, force_login);
+    let needs_update_check = cli.command.is_none() && update::should_check_updates();
+    let mut app = App::new(date_range, force_login, needs_update_check);
 
     loop {
+        if app.needs_update_check() {
+            app.check_for_update();
+        }
+
         terminal.draw(|frame| ui::draw(frame, &mut app))?;
 
-        if app.needs_refresh {
+        if app.needs_update_install() {
+            app.perform_update();
+        }
+
+        if app.needs_refresh && !app.is_update_blocking() {
             app.refresh_data();
         }
 
@@ -110,6 +120,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     disable_raw_mode()?;
     terminal.backend_mut().execute(LeaveAlternateScreen)?;
     terminal.show_cursor()?;
+
+    if let Some(message) = app.take_exit_message() {
+        println!("{message}");
+    }
 
     Ok(())
 }
