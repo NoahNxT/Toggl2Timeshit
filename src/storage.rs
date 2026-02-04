@@ -10,9 +10,10 @@ use std::path::PathBuf;
 use crate::models::{Client as TogglClientModel, Project, TimeEntry, Workspace};
 use crate::rounding::RoundingConfig;
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ThemePreference {
+    Terminal,
     Light,
     Dark,
 }

@@ -737,6 +737,18 @@ impl Theme {
 
 fn theme_from(pref: ThemePreference) -> Theme {
     match pref {
+        ThemePreference::Terminal => Theme {
+            bg: Color::Reset,
+            panel: Color::Reset,
+            border: Color::DarkGray,
+            text: Color::Reset,
+            muted: Color::DarkGray,
+            accent: Color::Blue,
+            highlight: Color::Yellow,
+            success: Color::Green,
+            error: Color::Red,
+            accent_dark: Color::Black,
+        },
         ThemePreference::Dark => Theme {
             bg: Color::Rgb(12, 18, 36),
             panel: Color::Rgb(18, 28, 52),
@@ -761,5 +773,13 @@ fn theme_from(pref: ThemePreference) -> Theme {
             error: Color::Rgb(220, 60, 80),
             accent_dark: Color::Rgb(18, 34, 64),
         },
+    }
+}
+
+fn theme_label(theme: ThemePreference) -> &'static str {
+    match theme {
+        ThemePreference::Terminal => "Terminal",
+        ThemePreference::Dark => "Midnight",
+        ThemePreference::Light => "Snow",
     }
 }

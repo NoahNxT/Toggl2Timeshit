@@ -135,7 +135,7 @@ impl App {
             storage::read_token()
         };
         let mode = if token.is_some() { Mode::Loading } else { Mode::Login };
-        let theme = storage::read_theme().unwrap_or(ThemePreference::Dark);
+        let theme = storage::read_theme().unwrap_or(ThemePreference::Terminal);
         let target_hours = storage::read_target_hours().unwrap_or(8.0);
         let rounding = storage::read_rounding();
         let token_hash = token.as_ref().map(|value| storage::hash_token(value));
@@ -1550,16 +1550,13 @@ impl App {
     fn toggle_theme(&mut self) {
         self.theme = match self.theme {
             ThemePreference::Dark => ThemePreference::Light,
-            ThemePreference::Light => ThemePreference::Dark,
+            ThemePreference::Light | ThemePreference::Terminal => ThemePreference::Dark,
         };
         if let Err(err) = storage::write_theme(self.theme) {
             self.status = Some(format!("Theme save failed: {err}"));
             self.set_toast("Theme save failed.", true);
         } else {
-            let label = match self.theme {
-                ThemePreference::Dark => "Dark mode",
-                ThemePreference::Light => "Light mode",
-            };
+            let label = theme_label(self.theme);
             self.status = Some(format!("Theme set to {label}."));
             self.set_toast(format!("{label} enabled."), false);
         }
@@ -1958,6 +1955,14 @@ fn parse_cached_time(value: &str) -> Option<DateTime<Local>> {
     DateTime::parse_from_rfc3339(value)
         .ok()
         .map(|dt| dt.with_timezone(&Local))
+}
+
+fn theme_label(theme: ThemePreference) -> &'static str {
+    match theme {
+        ThemePreference::Terminal => "Terminal",
+        ThemePreference::Dark => "Midnight",
+        ThemePreference::Light => "Snow",
+    }
 }
 
 struct Toast {
