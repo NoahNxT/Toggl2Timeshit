@@ -21,6 +21,9 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Build release
         run: cargo build --release
+      - name: Install zip (Windows)
+        if: runner.os == 'Windows'
+        run: choco install zip -y
       - name: Package binary
         shell: bash
         run: |
