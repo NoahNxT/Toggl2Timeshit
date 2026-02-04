@@ -7,6 +7,7 @@ Toggl2Timeshit is now a Rust-based Terminal UI (TUI) that turns Toggl Track time
 - Workspace selection
 - Date filters (single day or range)
 - Total hours with visual status
+- Forced auto-update prompt on launch (GitHub Releases)
 - Optional time rounding (increment + mode)
 - Secure token storage compatible with previous versions (`~/.toggl2tsc`)
 - Persistent cache to minimize Toggl API usage (manual refresh only)
@@ -38,6 +39,8 @@ Launch the dashboard:
 ```bash
 timeshit
 ```
+
+On launch, Timeshit checks GitHub Releases for updates. If a newer version is found, you must install it to continue. If the update check or download fails (offline/GitHub down), the app shows a warning and continues. After a successful update, the app exits and should be relaunched.
 
 Optional flags:
 ```bash

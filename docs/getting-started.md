@@ -36,6 +36,8 @@ You can authenticate in three ways:
 timeshit
 ```
 
+On launch, Timeshit checks GitHub Releases for updates. If a newer version is found, you must install it to continue. If the update check or download fails (offline/GitHub down), the app shows a warning and continues. After a successful update, the app exits and should be relaunched.
+
 Optional date flags:
 ```bash
 timeshit --date YYYY-MM-DD
