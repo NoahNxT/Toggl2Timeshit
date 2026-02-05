@@ -9,6 +9,9 @@ Timeshit is a Rust-based Terminal UI (TUI) that turns Toggl Track time entries i
 - Cache-first design to reduce Toggl API usage
 - Built-in settings (target hours, integrations, theme)
 
+## Screenshots
+![Workspace selection](docs/images/select-workspace.png)
+
 ## Installation
 
 ### macOS
