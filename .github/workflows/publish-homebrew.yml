@@ -94,27 +94,27 @@ jobs:
           linux_sha=$(shasum -a 256 "$linux_tar" | awk '{print $1}')
           mac_sha=$(shasum -a 256 "$mac_tar" | awk '{print $1}')
           mkdir -p Formula
-          cat > Formula/timeshit.rb <<EOF
-class Timeshit < Formula
-  desc "Toggl Track to timesheet TUI"
-  homepage "https://github.com/${{ github.repository }}"
-  version "${version}"
-
-  on_macos do
-    url "https://github.com/${{ github.repository }}/releases/download/${tag}/timeshit-macos.tar.gz"
-    sha256 "${mac_sha}"
-  end
-
-  on_linux do
-    url "https://github.com/${{ github.repository }}/releases/download/${tag}/timeshit-linux.tar.gz"
-    sha256 "${linux_sha}"
-  end
-
-  def install
-    bin.install "timeshit"
-  end
-end
-EOF
+          printf '%s\n' \
+            "class Timeshit < Formula" \
+            "  desc \"Toggl Track to timesheet TUI\"" \
+            "  homepage \"https://github.com/${{ github.repository }}\"" \
+            "  version \"${version}\"" \
+            "" \
+            "  on_macos do" \
+            "    url \"https://github.com/${{ github.repository }}/releases/download/${tag}/timeshit-macos.tar.gz\"" \
+            "    sha256 \"${mac_sha}\"" \
+            "  end" \
+            "" \
+            "  on_linux do" \
+            "    url \"https://github.com/${{ github.repository }}/releases/download/${tag}/timeshit-linux.tar.gz\"" \
+            "    sha256 \"${linux_sha}\"" \
+            "  end" \
+            "" \
+            "  def install" \
+            "    bin.install \"timeshit\"" \
+            "  end" \
+            "end" \
+            > Formula/timeshit.rb
 
       - name: Commit and push
         working-directory: nxt-solutions-packages
