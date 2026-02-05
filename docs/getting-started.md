@@ -4,6 +4,7 @@
 
 ### GitHub Releases
 Download the latest `timeshit` binary for your OS from GitHub Releases and put it on your PATH.
+On macOS, you can also download and install the unsigned `timeshit-macos.pkg`.
 
 ### Build from Source
 ```bash

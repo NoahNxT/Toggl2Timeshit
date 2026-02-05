@@ -80,6 +80,7 @@ Download the latest asset from GitHub Releases and place it in your PATH.
 Release assets:
 - Linux: `timeshit-linux.tar.gz`
 - macOS: `timeshit-macos.tar.gz`
+- macOS PKG: `timeshit-macos.pkg`
 - Windows: `timeshit-windows.zip`
 
 ### Build from Source
@@ -121,3 +122,5 @@ Full documentation lives in `docs/` and is published via GitHub Pages.
 
 ## License
 MIT
+**Direct download (PKG)**
+Download `timeshit-macos.pkg` from GitHub Releases and run the installer.
