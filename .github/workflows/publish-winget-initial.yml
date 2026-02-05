@@ -32,22 +32,97 @@ jobs:
           }
           "RELEASE_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-      - name: Download wingetcreate
-        shell: pwsh
-        run: |
-          Invoke-WebRequest -Uri https://aka.ms/wingetcreate/latest -OutFile wingetcreate.exe
+      - name: Checkout winget-pkgs
+        uses: actions/checkout@v4
+        with:
+          repository: microsoft/winget-pkgs
+          token: ${{ secrets.WINGET_TOKEN }}
 
-      - name: Submit initial manifest
+      - name: Download release asset
         shell: pwsh
         run: |
           $tag = $env:RELEASE_TAG
           $url = "https://github.com/${{ github.repository }}/releases/download/$tag/timeshit-windows.zip"
+          Invoke-WebRequest -Uri $url -OutFile timeshit-windows.zip
+          $sha = (Get-FileHash timeshit-windows.zip -Algorithm SHA256).Hash.ToLower()
+          "INSTALLER_SHA=$sha" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-          $args = @(
-            "new",
-            "--out", "winget-manifest",
-            "--token", "${{ secrets.WINGET_TOKEN }}",
-            $url
-          )
+      - name: Generate Winget manifest
+        shell: pwsh
+        env:
+          PACKAGE_ID: ${{ vars.WINGET_PACKAGE_ID }}
+          PACKAGE_NAME: ${{ vars.WINGET_PACKAGE_NAME }}
+        run: |
+          $tag = $env:RELEASE_TAG
+          $version = $tag.TrimStart("v")
+          $packageId = $env:PACKAGE_ID
+          if (-not $packageId -or $packageId -eq "") {
+            throw "WINGET_PACKAGE_ID is required."
+          }
+          $packageName = $env:PACKAGE_NAME
+          if (-not $packageName -or $packageName -eq "") {
+            $packageName = "Timeshit"
+          }
+          $publisher = $packageId.Split(".")[0]
+          $package = ($packageId.Split(".") | Select-Object -Skip 1) -join "."
+          $letter = $publisher.Substring(0,1).ToLower()
+          $manifestDir = "manifests/$letter/$publisher/$package/$version"
+          New-Item -ItemType Directory -Path $manifestDir -Force | Out-Null
 
-          & .\wingetcreate.exe @args
+          $url = "https://github.com/${{ github.repository }}/releases/download/$tag/timeshit-windows.zip"
+          $sha = $env:INSTALLER_SHA
+
+          @"
+PackageIdentifier: $packageId
+PackageVersion: $version
+DefaultLocale: en-US
+ManifestType: version
+ManifestVersion: 1.6.0
+"@ | Set-Content -Path "$manifestDir/$packageId.yaml" -Encoding UTF8
+
+          @"
+PackageIdentifier: $packageId
+PackageVersion: $version
+InstallerType: zip
+Installers:
+  - Architecture: x64
+    InstallerUrl: $url
+    InstallerSha256: $sha
+    NestedInstallerType: portable
+    NestedInstallerFiles:
+      - RelativeFilePath: timeshit.exe
+        PortableCommandAlias: timeshit
+ManifestType: installer
+ManifestVersion: 1.6.0
+"@ | Set-Content -Path "$manifestDir/$packageId.installer.yaml" -Encoding UTF8
+
+          @"
+PackageIdentifier: $packageId
+PackageVersion: $version
+PackageLocale: en-US
+Publisher: $publisher
+PackageName: $packageName
+License: MIT
+LicenseUrl: https://github.com/${{ github.repository }}/blob/main/LICENSE
+ShortDescription: Toggl Track to timesheet TUI
+PackageUrl: https://github.com/${{ github.repository }}
+PublisherUrl: https://github.com/${{ github.repository_owner }}
+Tags:
+  - toggl
+  - timesheet
+  - tui
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0
+"@ | Set-Content -Path "$manifestDir/$packageId.locale.en-US.yaml" -Encoding UTF8
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.WINGET_TOKEN }}
+          commit-message: "Add ${{ vars.WINGET_PACKAGE_ID }} ${{ env.RELEASE_TAG }}"
+          title: "Add ${{ vars.WINGET_PACKAGE_ID }} ${{ env.RELEASE_TAG }}"
+          body: |
+            - Automated Winget initial submission for `${{ vars.WINGET_PACKAGE_ID }}`.
+            - Release: `${{ env.RELEASE_TAG }}`
+          branch: "winget-${{ env.RELEASE_TAG }}"
+          push-to-fork: "${{ github.repository_owner }}/winget-pkgs"
