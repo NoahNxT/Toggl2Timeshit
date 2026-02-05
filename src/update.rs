@@ -77,10 +77,6 @@ mod enabled {
             }
         }
 
-        if is_managed_install() {
-            return false;
-        }
-
         true
     }
 

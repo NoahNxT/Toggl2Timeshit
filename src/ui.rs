@@ -446,7 +446,10 @@ fn header_line(app: &App, theme: &Theme) -> Line<'static> {
         .map(|dt| dt.format("%H:%M:%S").to_string())
         .unwrap_or_else(|| "Never".to_string());
     Line::from(vec![
-        Span::styled("Timeshit", theme.title_style()),
+        Span::styled(
+            format!("Timeshit v{}", update::current_version()),
+            theme.title_style(),
+        ),
         Span::raw("  "),
         Span::styled("Workspace", theme.muted_style()),
         Span::raw(": "),
