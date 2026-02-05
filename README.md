@@ -120,6 +120,11 @@ Date range selection is done inside the TUI (`d`).
 ## Docs
 Full documentation lives in `docs/` and is published via GitHub Pages.
 
+## Project
+- Changelog: `CHANGELOG.md`
+- Contributing: `CONTRIBUTING.md`
+- Security: `SECURITY.md`
+
 ## License
 MIT
 **Direct download (PKG)**
