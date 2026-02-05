@@ -250,37 +250,6 @@ mod enabled {
         )))
     }
 
-    fn is_managed_install() -> bool {
-        let exe = match std::env::current_exe() {
-            Ok(path) => path,
-            Err(_) => return false,
-        };
-        let canonical = fs::canonicalize(&exe).unwrap_or(exe);
-        let path_str = canonical.to_string_lossy().to_lowercase();
-
-        if path_str.contains("/cellar/") || path_str.contains("\\cellar\\") {
-            return true;
-        }
-
-        if path_str.contains("\\chocolatey\\lib\\")
-            || path_str.contains("\\chocolatey\\bin\\")
-            || path_str.contains("\\scoop\\apps\\")
-            || path_str.contains("\\windowsapps\\")
-        {
-            return true;
-        }
-
-        if cfg!(target_os = "linux") {
-            if Path::new("/var/lib/dpkg/info/timeshit.list").exists()
-                || Path::new("/usr/share/doc/timeshit").exists()
-            {
-                return true;
-            }
-        }
-
-        false
-    }
-
     #[cfg(unix)]
     fn install_update_unix(staged_path: &Path, current_exe: &Path) -> Result<(), UpdateError> {
         fs::copy(staged_path, current_exe).map_err(|err| UpdateError::Io(err.to_string()))?;

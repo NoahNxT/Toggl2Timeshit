@@ -26,7 +26,6 @@ pub enum Mode {
     DateInput(DateInputMode),
     Settings,
     Error,
-    UpdatePrompt,
     Updating,
 }
 
@@ -251,7 +250,6 @@ impl App {
             Mode::WorkspaceSelect => self.handle_workspace_input(key),
             Mode::DateInput(mode) => self.handle_date_input(mode, key),
             Mode::Settings => self.handle_settings_input(key),
-            Mode::UpdatePrompt => self.handle_update_prompt_input(key),
             Mode::Updating => {}
             Mode::Rollups => self.handle_rollups_input(key),
             Mode::Dashboard | Mode::Loading | Mode::Error => self.handle_dashboard_input(key),
@@ -267,7 +265,7 @@ impl App {
     }
 
     pub fn is_update_blocking(&self) -> bool {
-        matches!(self.mode, Mode::UpdatePrompt | Mode::Updating)
+        matches!(self.mode, Mode::Updating)
     }
 
     pub fn take_exit_message(&mut self) -> Option<String> {
@@ -367,7 +365,7 @@ impl App {
 
         self.ensure_cache_loaded(&token_hash);
         let manual_refresh = matches!(self.refresh_intent, RefreshIntent::ForceApi);
-        let mut allow_api = manual_refresh;
+        let allow_api = manual_refresh;
         self.refresh_intent = RefreshIntent::CacheOnly;
 
         let client = TogglClient::new(token);
@@ -524,15 +522,6 @@ impl App {
                 self.mode = Mode::Error;
                 self.status = Some(message);
             }
-        }
-    }
-
-    fn handle_update_prompt_input(&mut self, key: KeyEvent) {
-        match key.code {
-            KeyCode::Char('u') | KeyCode::Enter => self.start_update(),
-            KeyCode::Char('q') => self.should_quit = true,
-            KeyCode::Esc => self.resume_from_update(),
-            _ => {}
         }
     }
 
@@ -2100,28 +2089,16 @@ impl App {
             return None;
         }
 
-        let mut api_error: Option<TogglError> = None;
         match client.fetch_workspaces() {
             Ok(workspaces) => {
                 self.update_cache_workspaces(&workspaces);
-                return Some(workspaces);
+                Some(workspaces)
             }
             Err(err) => {
-                if matches!(err, TogglError::Unauthorized) {
-                    self.handle_error(err);
-                    return None;
-                }
-                api_error = Some(err);
+                self.handle_error(err);
+                None
             }
         }
-
-        if let Some(err) = api_error {
-            self.handle_error(err);
-        } else {
-            self.mode = Mode::Error;
-            self.status = Some(self.no_cache_message());
-        }
-        None
     }
 
     fn resolve_projects(
@@ -2145,28 +2122,16 @@ impl App {
             return None;
         }
 
-        let mut api_error: Option<TogglError> = None;
         match client.fetch_projects(workspace_id) {
             Ok(projects) => {
                 self.update_cache_projects(workspace_id, &projects);
-                return Some(projects);
+                Some(projects)
             }
             Err(err) => {
-                if matches!(err, TogglError::Unauthorized) {
-                    self.handle_error(err);
-                    return None;
-                }
-                api_error = Some(err);
+                self.handle_error(err);
+                None
             }
         }
-
-        if let Some(err) = api_error {
-            self.handle_error(err);
-        } else {
-            self.mode = Mode::Error;
-            self.status = Some(self.no_cache_message());
-        }
-        None
     }
 
     fn resolve_client_names(
