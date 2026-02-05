@@ -31,6 +31,16 @@ Automation uses:
 
 On each release, a GitHub Action packs and pushes `timeshit.<version>.nupkg`.
 
+Install:
+```powershell
+choco install timeshit
+```
+
+Install a specific version:
+```powershell
+choco install timeshit --version=1.3.6
+```
+
 ## Winget (Windows)
 Requires a GitHub token to open PRs against `microsoft/winget-pkgs`.
 

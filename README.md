@@ -23,6 +23,9 @@ brew install timeshit
 ```powershell
 choco install timeshit
 ```
+```powershell
+choco install timeshit --version=1.3.6
+```
 
 **Scoop**
 ```powershell
