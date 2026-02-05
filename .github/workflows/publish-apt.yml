@@ -19,6 +19,19 @@ jobs:
   apt:
     if: ${{ github.event_name == 'release' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        include:
+          - distro: ubuntu
+            release: noble
+          - distro: ubuntu
+            release: jammy
+          - distro: ubuntu
+            release: focal
+          - distro: debian
+            release: bookworm
+          - distro: debian
+            release: bullseye
     steps:
       - uses: actions/checkout@v4
         with:
@@ -61,8 +74,8 @@ jobs:
             echo "CLOUDSMITH_API_KEY not set; skipping."
             exit 0
           fi
-          if [[ -z "${{ vars.CLOUDSMITH_TARGETS }}" && ( -z "${{ vars.CLOUDSMITH_REPO }}" || -z "${{ vars.CLOUDSMITH_DISTRO }}" || -z "${{ vars.CLOUDSMITH_RELEASE }}" ) ]]; then
-            echo "CLOUDSMITH_TARGETS or CLOUDSMITH_REPO/CLOUDSMITH_DISTRO/CLOUDSMITH_RELEASE not set; skipping."
+          if [[ -z "${{ vars.CLOUDSMITH_REPO }}" ]]; then
+            echo "CLOUDSMITH_REPO not set; skipping."
             exit 0
           fi
 
@@ -82,20 +95,10 @@ jobs:
         env:
           CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_API_KEY }}
           CLOUDSMITH_REPO: ${{ vars.CLOUDSMITH_REPO }}
-          CLOUDSMITH_DISTRO: ${{ vars.CLOUDSMITH_DISTRO }}
-          CLOUDSMITH_RELEASE: ${{ vars.CLOUDSMITH_RELEASE }}
-          CLOUDSMITH_TARGETS: ${{ vars.CLOUDSMITH_TARGETS }}
+          CLOUDSMITH_DISTRO: ${{ matrix.distro }}
+          CLOUDSMITH_RELEASE: ${{ matrix.release }}
         run: |
           deb=$(ls target/debian/*.deb | head -n 1)
-          if [[ -n "${CLOUDSMITH_TARGETS}" ]]; then
-            targets="${CLOUDSMITH_TARGETS}"
-          else
-            targets="${CLOUDSMITH_REPO}/${CLOUDSMITH_DISTRO}/${CLOUDSMITH_RELEASE}"
-          fi
-          IFS=',' read -ra list <<< "${targets}"
-          for target in "${list[@]}"; do
-            target=$(echo "$target" | xargs)
-            [[ -z "$target" ]] && continue
-            echo "Uploading $deb to $target"
-            cloudsmith push deb "$target" "$deb" -k "$CLOUDSMITH_API_KEY"
-          done
+          target="${CLOUDSMITH_REPO}/${CLOUDSMITH_DISTRO}/${CLOUDSMITH_RELEASE}"
+          echo "Uploading $deb to $target"
+          cloudsmith push deb "$target" "$deb" -k "$CLOUDSMITH_API_KEY"

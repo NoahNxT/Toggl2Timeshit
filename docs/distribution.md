@@ -64,9 +64,10 @@ Recommended: Cloudsmith repo and API key for publishing `.deb` and `.rpm`.
 1. Create a Cloudsmith account and a **Debian** repository.
 2. Add repo variable:
    - `CLOUDSMITH_REPO` (e.g. `nxt-solutions/timeshit`)
-   - `CLOUDSMITH_DISTRO` (e.g. `debian` or `ubuntu`)
-   - `CLOUDSMITH_RELEASE` (e.g. `bookworm` for Debian 12, `bullseye` for Debian 11, or `jammy` for Ubuntu 22.04)
-   - Optional: `CLOUDSMITH_TARGETS` (comma-separated targets, e.g. `nxt-solutions/timeshit/ubuntu/noble,nxt-solutions/timeshit/debian/bookworm`)
+   - Targets are controlled in the workflow matrix (`publish-apt.yml`).
+     Current defaults:
+     - Ubuntu LTS: `focal`, `jammy`, `noble`
+     - Debian stable: `bullseye`, `bookworm`
 3. Add repo secret:
    - `CLOUDSMITH_API_KEY`
 4. On release, GitHub Actions builds a `.deb` and uploads it to Cloudsmith.
