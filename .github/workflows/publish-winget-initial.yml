@@ -72,48 +72,51 @@ jobs:
           $url = "https://github.com/${{ github.repository }}/releases/download/$tag/timeshit-windows.zip"
           $sha = $env:INSTALLER_SHA
 
-          @"
-PackageIdentifier: $packageId
-PackageVersion: $version
-DefaultLocale: en-US
-ManifestType: version
-ManifestVersion: 1.6.0
-"@ | Set-Content -Path "$manifestDir/$packageId.yaml" -Encoding UTF8
+          $versionManifest = @(
+            "PackageIdentifier: $packageId"
+            "PackageVersion: $version"
+            "DefaultLocale: en-US"
+            "ManifestType: version"
+            "ManifestVersion: 1.6.0"
+          ) -join "`n"
+          $versionManifest | Set-Content -Path "$manifestDir/$packageId.yaml" -Encoding UTF8
 
-          @"
-PackageIdentifier: $packageId
-PackageVersion: $version
-InstallerType: zip
-Installers:
-  - Architecture: x64
-    InstallerUrl: $url
-    InstallerSha256: $sha
-    NestedInstallerType: portable
-    NestedInstallerFiles:
-      - RelativeFilePath: timeshit.exe
-        PortableCommandAlias: timeshit
-ManifestType: installer
-ManifestVersion: 1.6.0
-"@ | Set-Content -Path "$manifestDir/$packageId.installer.yaml" -Encoding UTF8
+          $installerManifest = @(
+            "PackageIdentifier: $packageId"
+            "PackageVersion: $version"
+            "InstallerType: zip"
+            "Installers:"
+            "  - Architecture: x64"
+            "    InstallerUrl: $url"
+            "    InstallerSha256: $sha"
+            "    NestedInstallerType: portable"
+            "    NestedInstallerFiles:"
+            "      - RelativeFilePath: timeshit.exe"
+            "        PortableCommandAlias: timeshit"
+            "ManifestType: installer"
+            "ManifestVersion: 1.6.0"
+          ) -join "`n"
+          $installerManifest | Set-Content -Path "$manifestDir/$packageId.installer.yaml" -Encoding UTF8
 
-          @"
-PackageIdentifier: $packageId
-PackageVersion: $version
-PackageLocale: en-US
-Publisher: $publisher
-PackageName: $packageName
-License: MIT
-LicenseUrl: https://github.com/${{ github.repository }}/blob/main/LICENSE
-ShortDescription: Toggl Track to timesheet TUI
-PackageUrl: https://github.com/${{ github.repository }}
-PublisherUrl: https://github.com/${{ github.repository_owner }}
-Tags:
-  - toggl
-  - timesheet
-  - tui
-ManifestType: defaultLocale
-ManifestVersion: 1.6.0
-"@ | Set-Content -Path "$manifestDir/$packageId.locale.en-US.yaml" -Encoding UTF8
+          $localeManifest = @(
+            "PackageIdentifier: $packageId"
+            "PackageVersion: $version"
+            "PackageLocale: en-US"
+            "Publisher: $publisher"
+            "PackageName: $packageName"
+            "License: MIT"
+            "LicenseUrl: https://github.com/${{ github.repository }}/blob/main/LICENSE"
+            "ShortDescription: Toggl Track to timesheet TUI"
+            "PackageUrl: https://github.com/${{ github.repository }}"
+            "PublisherUrl: https://github.com/${{ github.repository_owner }}"
+            "Tags:"
+            "  - toggl"
+            "  - timesheet"
+            "  - tui"
+            "ManifestType: defaultLocale"
+            "ManifestVersion: 1.6.0"
+          ) -join "`n"
+          $localeManifest | Set-Content -Path "$manifestDir/$packageId.locale.en-US.yaml" -Encoding UTF8
 
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v6
