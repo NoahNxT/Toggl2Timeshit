@@ -91,21 +91,21 @@ jobs:
           fi
           win_sha=$(shasum -a 256 "$win_zip" | awk '{print $1}')
           mkdir -p bucket
-          printf '%s\n' \
-            "{" \
-            "  \"version\": \"${version}\"," \
-            "  \"description\": \"Toggl Track to timesheet TUI\"," \
-            "  \"homepage\": \"https://github.com/${{ github.repository }}\"," \
-            "  \"license\": \"MIT\"," \
-            "  \"architecture\": {" \
-            "    \"64bit\": {" \
-            "      \"url\": \"https://github.com/${{ github.repository }}/releases/download/${tag}/timeshit-windows.zip\"," \
-            "      \"hash\": \"${win_sha}\"" \
-            "    }" \
-            "  }," \
-            "  \"bin\": \"timeshit.exe\"" \
-            "}" \
-            > bucket/timeshit.json
+          cat > bucket/timeshit.json <<EOF
+{
+  "version": "${version}",
+  "description": "Toggl Track to timesheet TUI",
+  "homepage": "https://github.com/${{ github.repository }}",
+  "license": "MIT",
+  "architecture": {
+    "64bit": {
+      "url": "https://github.com/${{ github.repository }}/releases/download/${tag}/timeshit-windows.zip",
+      "hash": "${win_sha}"
+    }
+  },
+  "bin": "timeshit.exe"
+}
+EOF
 
       - name: Commit and push
         working-directory: homebrew-nxt-solutions-packages
