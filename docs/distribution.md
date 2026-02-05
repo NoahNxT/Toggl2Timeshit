@@ -98,4 +98,9 @@ Other managers can be added once credentials/accounts are available.
 3. Set repo variables:
    - `WINGET_PACKAGE_ID` (`NxTSolutions.Timeshit`)
 4. Submit the **first** Winget manifest manually (required by Winget).
-5. Releases will auto-open PRs for updates.
+5. After the initial PR is merged, releases will auto-open PRs for updates.
+
+Initial submission (manual):
+```powershell
+wingetcreate new --submit --token <PAT> --urls https://github.com/NoahNxT/Toggl2Timeshit/releases/download/v1.3.6/timeshit-windows.zip --version 1.3.6 --id NxTSolutions.Timeshit
+```

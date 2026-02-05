@@ -42,6 +42,17 @@ jobs:
           }
           "RELEASE_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Append
 
+      - name: Guard missing Winget manifest
+        shell: pwsh
+        run: |
+          $manifestUrl = "https://api.github.com/repos/microsoft/winget-pkgs/contents/manifests/n/NxTSolutions/Timeshit"
+          try {
+            Invoke-WebRequest -Uri $manifestUrl -Headers @{ "User-Agent" = "timeshit" } | Out-Null
+          } catch {
+            Write-Host "Winget manifest not found yet. Initial submission must be merged first."
+            exit 0
+          }
+
       - name: Download wingetcreate
         shell: pwsh
         run: |
