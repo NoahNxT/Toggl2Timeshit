@@ -105,12 +105,19 @@ mod enabled {
             return Ok(None);
         }
 
-        let asset_name = expected_asset_name()?;
+        let candidates = expected_asset_candidates()?;
+        let candidate_set: std::collections::HashSet<String> =
+            candidates.iter().map(|name| name.to_lowercase()).collect();
         let asset = release
             .assets
             .into_iter()
-            .find(|asset| asset.name == asset_name)
-            .ok_or_else(|| UpdateError::Parse(format!("Release asset {asset_name} not found")))?;
+            .find(|asset| candidate_set.contains(&asset.name.to_lowercase()))
+            .ok_or_else(|| {
+                UpdateError::Parse(format!(
+                    "Release asset {} not found",
+                    candidates.join(" or ")
+                ))
+            })?;
 
         Ok(Some(UpdateInfo {
             latest,
@@ -160,8 +167,8 @@ mod enabled {
                 .map_err(|err| UpdateError::Io(err.to_string()))?;
         }
 
-        let binary_name = expected_binary_name()?;
-        let extracted_path = find_extracted_binary(tempdir.path(), &binary_name)?;
+        let binary_candidates = expected_binary_candidates()?;
+        let extracted_path = find_extracted_binary(tempdir.path(), &binary_candidates)?;
         let _persisted_dir = tempdir.keep();
 
         Ok(extracted_path)
@@ -204,46 +211,47 @@ mod enabled {
             .map_err(|err| UpdateError::Network(err.to_string()))
     }
 
-    fn expected_asset_name() -> Result<String, UpdateError> {
-        let asset = match env::consts::OS {
-            "linux" => "timeshit-linux.tar.gz",
-            "macos" => "timeshit-macos.tar.gz",
-            "windows" => "timeshit-windows.zip",
+    fn expected_asset_candidates() -> Result<Vec<String>, UpdateError> {
+        let assets = match env::consts::OS {
+            "linux" => vec!["timeshit-linux.tar.gz", "timeshit-Linux.tar.gz"],
+            "macos" => vec!["timeshit-macos.tar.gz", "timeshit-macOS.tar.gz"],
+            "windows" => vec!["timeshit-windows.zip", "timeshit-Windows.zip"],
             other => return Err(UpdateError::Unsupported(format!("Unsupported OS: {other}"))),
         };
-        Ok(asset.to_string())
+        Ok(assets.into_iter().map(|value| value.to_string()).collect())
     }
 
-    fn expected_binary_name() -> Result<String, UpdateError> {
-        let binary = match env::consts::OS {
-            "linux" => "timeshit",
-            "macos" => "timeshit",
-            "windows" => "timeshit.exe",
+    fn expected_binary_candidates() -> Result<Vec<String>, UpdateError> {
+        let binaries = match env::consts::OS {
+            "linux" => vec!["timeshit", "timeshit-Linux"],
+            "macos" => vec!["timeshit", "timeshit-macOS"],
+            "windows" => vec!["timeshit.exe"],
             other => return Err(UpdateError::Unsupported(format!("Unsupported OS: {other}"))),
         };
-        Ok(binary.to_string())
+        Ok(binaries.into_iter().map(|value| value.to_string()).collect())
     }
 
-    fn find_extracted_binary(dir: &Path, expected: &str) -> Result<PathBuf, UpdateError> {
-        let direct = dir.join(expected);
-        if direct.exists() {
-            return Ok(direct);
+    fn find_extracted_binary(dir: &Path, expected: &[String]) -> Result<PathBuf, UpdateError> {
+        for name in expected {
+            let direct = dir.join(name);
+            if direct.exists() {
+                return Ok(direct);
+            }
         }
 
         let entries = fs::read_dir(dir).map_err(|err| UpdateError::Io(err.to_string()))?;
         for entry in entries.flatten() {
             let path = entry.path();
-            if path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name == expected)
-            {
-                return Ok(path);
+            if let Some(name) = path.file_name().and_then(|value| value.to_str()) {
+                if expected.iter().any(|candidate| candidate == name) {
+                    return Ok(path);
+                }
             }
         }
 
         Err(UpdateError::Parse(format!(
-            "Extracted binary {expected} not found"
+            "Extracted binary {} not found",
+            expected.join(" or ")
         )))
     }
 
