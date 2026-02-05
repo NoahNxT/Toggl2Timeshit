@@ -6,20 +6,31 @@ on:
   workflow_run:
     workflows: ["🔖 Release TUI"]
     types: [completed]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
   winget:
-    if: ${{ secrets.WINGET_TOKEN != '' && vars.WINGET_PACKAGE_ID != '' && (github.event_name == 'release' || github.event.workflow_run.conclusion == 'success') }}
+    if: ${{ github.event_name == 'release' || github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
     runs-on: windows-2022
     steps:
+      - name: Guard missing Winget config
+        shell: pwsh
+        run: |
+          if (-not "${{ secrets.WINGET_TOKEN }}" -or -not "${{ vars.WINGET_PACKAGE_ID }}") {
+            Write-Host "WINGET_TOKEN or WINGET_PACKAGE_ID not set; skipping."
+            exit 0
+          }
+
       - name: Resolve release tag
         shell: pwsh
         run: |
           if ("${{ github.event_name }}" -eq "release") {
             $tag = "${{ github.event.release.tag_name }}"
+          } elseif ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $tag = (Invoke-RestMethod -Uri "https://api.github.com/repos/${{ github.repository }}/releases/latest").tag_name
           } else {
             $tag = (Invoke-RestMethod -Uri "https://api.github.com/repos/${{ github.repository }}/releases/latest").tag_name
           }
@@ -38,7 +49,7 @@ jobs:
         run: |
           $tag = $env:RELEASE_TAG
           $version = $tag.TrimStart("v")
-          $url = "https://github.com/${{ github.repository }}/releases/download/$tag/timeshit.exe"
+          $url = "https://github.com/${{ github.repository }}/releases/download/$tag/timeshit-windows.zip"
 
           $args = @(
             "update",

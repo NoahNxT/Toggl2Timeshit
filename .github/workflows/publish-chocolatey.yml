@@ -6,15 +6,24 @@ on:
   workflow_run:
     workflows: ["🔖 Release TUI"]
     types: [completed]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
   chocolatey:
-    if: ${{ secrets.CHOCOLATEY_API_KEY != '' && (github.event_name == 'release' || github.event.workflow_run.conclusion == 'success') }}
+    if: ${{ github.event_name == 'release' || github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
     runs-on: windows-2022
     steps:
+      - name: Guard missing Chocolatey API key
+        shell: pwsh
+        run: |
+          if (-not "${{ secrets.CHOCOLATEY_API_KEY }}") {
+            Write-Host "CHOCOLATEY_API_KEY not set; skipping."
+            exit 0
+          }
+
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -24,6 +33,8 @@ jobs:
         run: |
           if ("${{ github.event_name }}" -eq "release") {
             $tag = "${{ github.event.release.tag_name }}"
+          } elseif ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $tag = (Invoke-RestMethod -Uri "https://api.github.com/repos/${{ github.repository }}/releases/latest").tag_name
           } else {
             $tag = (Invoke-RestMethod -Uri "https://api.github.com/repos/${{ github.repository }}/releases/latest").tag_name
           }
