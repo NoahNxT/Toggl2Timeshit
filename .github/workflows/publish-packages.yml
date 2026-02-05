@@ -51,10 +51,19 @@ jobs:
             echo "PACKAGES_REPO_TOKEN not set; skipping."
             exit 0
           fi
-          default_branch=$(git ls-remote --symref https://github.com/NoahNxT/nxt-solutions-packages.git HEAD | \
+          default_branch=$(git ls-remote --symref "https://x-access-token:${PACKAGES_TOKEN}@github.com/NoahNxT/nxt-solutions-packages.git" HEAD | \
             awk '/^ref:/ {print $2}' | sed 's@refs/heads/@@')
           if [[ -z "${default_branch}" ]]; then
-            default_branch="master"
+            for candidate in main master; do
+              if git ls-remote --heads "https://x-access-token:${PACKAGES_TOKEN}@github.com/NoahNxT/nxt-solutions-packages.git" "${candidate}" | grep -q "${candidate}$"; then
+                default_branch="${candidate}"
+                break
+              fi
+            done
+          fi
+          if [[ -z "${default_branch}" ]]; then
+            echo "Could not resolve default branch."
+            exit 1
           fi
           git clone "https://x-access-token:${PACKAGES_TOKEN}@github.com/NoahNxT/nxt-solutions-packages.git" \
             --branch "${default_branch}" --depth 1
