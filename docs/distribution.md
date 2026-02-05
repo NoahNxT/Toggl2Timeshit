@@ -13,6 +13,10 @@ Install:
 brew tap NoahNxT/nxt-solutions-packages
 brew install timeshit
 ```
+Upgrade:
+```bash
+brew upgrade timeshit
+```
 
 ## Scoop (Windows)
 Same combined packages repo:
