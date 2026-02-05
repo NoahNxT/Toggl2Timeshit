@@ -86,12 +86,18 @@ jobs:
           tag="${RELEASE_TAG}"
           version="${tag#v}"
           echo "VERSION=${version}" >> "$GITHUB_ENV"
-          linux_tar="/tmp/releases/timeshit-linux.tar.gz"
-          mac_tar="/tmp/releases/timeshit-macos.tar.gz"
-          win_zip="/tmp/releases/timeshit-windows.zip"
+          shopt -s nocaseglob nullglob
+          linux_candidates=(/tmp/releases/timeshit*linux*.tar.gz)
+          mac_candidates=(/tmp/releases/timeshit*macos*.tar.gz /tmp/releases/timeshit*mac*.tar.gz)
+          win_candidates=(/tmp/releases/timeshit*windows*.zip)
+          linux_tar="${linux_candidates[0]:-}"
+          mac_tar="${mac_candidates[0]:-}"
+          win_zip="${win_candidates[0]:-}"
 
-          if [[ ! -f "$linux_tar" || ! -f "$mac_tar" || ! -f "$win_zip" ]]; then
-            echo "Missing release assets. Ensure the release contains timeshit-linux.tar.gz, timeshit-macos.tar.gz, and timeshit-windows.zip."
+          if [[ -z "$linux_tar" || -z "$mac_tar" || -z "$win_zip" ]]; then
+            echo "Missing release assets. Expected linux/macos tar.gz and windows zip in /tmp/releases."
+            echo "Found:"
+            ls -la /tmp/releases || true
             exit 1
           fi
 
