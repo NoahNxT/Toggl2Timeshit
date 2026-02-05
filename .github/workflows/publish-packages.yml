@@ -62,11 +62,17 @@ jobs:
             done
           fi
           if [[ -z "${default_branch}" ]]; then
-            echo "Could not resolve default branch."
-            exit 1
+            echo "Packages repo has no default branch yet. Bootstrapping main."
+            rm -rf nxt-solutions-packages
+            mkdir nxt-solutions-packages
+            cd nxt-solutions-packages
+            git init -b main
+            git remote add origin "https://x-access-token:${PACKAGES_TOKEN}@github.com/NoahNxT/nxt-solutions-packages.git"
+          else
+            git clone "https://x-access-token:${PACKAGES_TOKEN}@github.com/NoahNxT/nxt-solutions-packages.git" \
+              --branch "${default_branch}" --depth 1
+            cd nxt-solutions-packages
           fi
-          git clone "https://x-access-token:${PACKAGES_TOKEN}@github.com/NoahNxT/nxt-solutions-packages.git" \
-            --branch "${default_branch}" --depth 1
 
       - name: Download release assets
         env:
