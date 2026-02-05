@@ -97,10 +97,6 @@ Other managers can be added once credentials/accounts are available.
 2. Create a PAT with **public_repo** scope and add it as `WINGET_TOKEN`.
 3. Set repo variables:
    - `WINGET_PACKAGE_ID` (`NxTSolutions.Timeshit`)
-4. Submit the **first** Winget manifest manually (required by Winget).
+4. Run the **🪟 Publish Winget (Initial)** workflow with a release tag (e.g. `v1.3.6`).
+   - This generates the manifest and opens the initial PR automatically.
 5. After the initial PR is merged, releases will auto-open PRs for updates.
-
-Initial submission (manual):
-```powershell
-wingetcreate new --submit --token <PAT> --urls https://github.com/NoahNxT/Toggl2Timeshit/releases/download/v1.3.6/timeshit-windows.zip --version 1.3.6 --id NxTSolutions.Timeshit
-```
