@@ -17,6 +17,11 @@ Upgrade:
 ```bash
 brew upgrade timeshit
 ```
+If you previously installed the legacy Node package, the old binary may conflict:
+```bash
+rm /opt/homebrew/bin/timeshit
+brew link --overwrite timeshit
+```
 
 ## Scoop (Windows)
 Same combined packages repo:

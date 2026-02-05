@@ -21,6 +21,11 @@ Upgrade:
 ```bash
 brew upgrade timeshit
 ```
+If you previously installed the legacy Node package, you may need to unlink it:
+```bash
+rm /opt/homebrew/bin/timeshit
+brew link --overwrite timeshit
+```
 
 ### Windows
 **Chocolatey**
