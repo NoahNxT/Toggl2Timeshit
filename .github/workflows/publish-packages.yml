@@ -51,12 +51,13 @@ jobs:
             echo "PACKAGES_REPO_TOKEN not set; skipping."
             exit 0
           fi
-          default_branch=$(curl -s -H "Authorization: token ${PACKAGES_TOKEN}" \
-            https://api.github.com/repos/NoahNxT/nxt-solutions-packages | \
-            python -c "import sys, json; print(json.load(sys.stdin).get('default_branch','master'))")
+          default_branch=$(git ls-remote --symref https://github.com/NoahNxT/nxt-solutions-packages.git HEAD | \
+            awk '/^ref:/ {print $2}' | sed 's@refs/heads/@@')
+          if [[ -z "${default_branch}" ]]; then
+            default_branch="master"
+          fi
           git clone "https://x-access-token:${PACKAGES_TOKEN}@github.com/NoahNxT/nxt-solutions-packages.git" \
             --branch "${default_branch}" --depth 1
-          cd nxt-solutions-packages
 
       - name: Download release assets
         env:
