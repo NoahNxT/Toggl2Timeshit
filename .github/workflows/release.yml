@@ -132,6 +132,7 @@ jobs:
         with:
           tag_name: ${{ needs.prepare.outputs.release_tag }}
           name: ${{ needs.prepare.outputs.release_tag }}
+          generate_release_notes: true
           files: dist/**/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

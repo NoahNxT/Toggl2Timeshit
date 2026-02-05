@@ -18,6 +18,7 @@ Workflow file:
 - A git tag `v<version>` is created and pushed.
 - Builds release binaries for **Linux, macOS, Windows**.
 - Creates a GitHub Release with tag `v<version>`.
+- Auto-generates release notes from merged PRs and commits.
 - Attaches packaged binaries to the release.
 
 ## Release Assets
