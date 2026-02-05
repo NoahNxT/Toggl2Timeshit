@@ -58,6 +58,16 @@ curl -1sLf 'https://dl.cloudsmith.io/public/nxt-solutions/timeshit/setup.deb.sh'
 sudo apt-get update
 sudo apt-get install timeshit
 ```
+If `timeshit` is not found after setup, verify the package is installed:
+```bash
+dpkg -s timeshit
+which timeshit
+```
+If `apt` can’t find the package, force the distro/codename that matches your Cloudsmith publish target:
+```bash
+curl -1sLf 'https://dl.cloudsmith.io/public/nxt-solutions/timeshit/setup.deb.sh' \
+  | sudo -E distro=ubuntu codename=noble bash
+```
 
 ### GitHub Releases (any OS)
 Download the latest asset from GitHub Releases and place it in your PATH.

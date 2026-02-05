@@ -82,6 +82,17 @@ sudo apt-get update
 sudo apt-get install timeshit
 ```
 
+Troubleshooting (command not found):
+```bash
+dpkg -s timeshit
+which timeshit
+```
+If `apt` can’t find the package, force the distro/codename to match what you publish:
+```bash
+curl -1sLf 'https://dl.cloudsmith.io/public/nxt-solutions/timeshit/setup.deb.sh' \
+  | sudo -E distro=ubuntu codename=noble bash
+```
+
 Install a specific version:
 ```bash
 sudo apt-get install timeshit=1.3.5-1
