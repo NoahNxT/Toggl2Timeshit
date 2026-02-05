@@ -42,7 +42,7 @@ choco install timeshit --version=1.3.6
 
 **Scoop**
 ```powershell
-scoop bucket add nxt-solutions https://github.com/NoahNxT/homebrew-nxt-solutions-packages
+scoop bucket add nxt-solutions https://github.com/NoahNxT/scoop-nxt-solutions-packages
 scoop install timeshit
 ```
 

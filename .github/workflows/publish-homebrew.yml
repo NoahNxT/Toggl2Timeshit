@@ -58,9 +58,9 @@ jobs:
             done
           fi
           if [[ -z "${default_branch}" ]]; then
-            rm -rf nxt-solutions-packages
-            mkdir nxt-solutions-packages
-            cd nxt-solutions-packages
+            rm -rf homebrew-nxt-solutions-packages
+            mkdir homebrew-nxt-solutions-packages
+            cd homebrew-nxt-solutions-packages
             git init -b main
             git remote add origin "https://x-access-token:${PACKAGES_TOKEN}@github.com/NoahNxT/homebrew-nxt-solutions-packages.git"
           else
@@ -94,6 +94,7 @@ jobs:
           linux_sha=$(shasum -a 256 "$linux_tar" | awk '{print $1}')
           mac_sha=$(shasum -a 256 "$mac_tar" | awk '{print $1}')
           mkdir -p Formula
+          rm -rf bucket
           printf '%s\n' \
             "class Timeshit < Formula" \
             "  desc \"Toggl Track to timesheet TUI\"" \
@@ -129,7 +130,7 @@ jobs:
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
-          git add Formula/timeshit.rb
+          git add -A
           if git diff --cached --quiet; then
             echo "No changes to commit."
             exit 0
