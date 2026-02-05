@@ -10,13 +10,81 @@ permissions:
   contents: write
 
 jobs:
+  prepare:
+    runs-on: ubuntu-22.04
+    outputs:
+      release_tag: ${{ steps.set_tag.outputs.release_tag }}
+      version: ${{ steps.set_tag.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set version
+        id: set_tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          input="${{ inputs.version }}"
+          version="${input#v}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "release_tag=v${version}" >> "$GITHUB_OUTPUT"
+          VERSION="${version}" python3 - <<'PY'
+          import os, re
+          version = os.environ["VERSION"]
+          def replace_version(path):
+              with open(path, "r", encoding="utf-8") as f:
+                  data = f.read()
+              data = re.sub(r'(?m)^version = ".*"$', f'version = "{version}"', data, count=1)
+              with open(path, "w", encoding="utf-8") as f:
+                  f.write(data)
+          replace_version("Cargo.toml")
+          # Update Cargo.lock package version entry
+          with open("Cargo.lock", "r", encoding="utf-8") as f:
+              lines = f.readlines()
+          out = []
+          in_pkg = False
+          for line in lines:
+              if line.startswith("[[package]]"):
+                  in_pkg = False
+              if line.strip() == 'name = "timeshit"':
+                  in_pkg = True
+              if in_pkg and line.strip().startswith("version = "):
+                  line = f'version = "{version}"\n'
+                  in_pkg = False
+              out.append(line)
+          with open("Cargo.lock", "w", encoding="utf-8") as f:
+              f.writelines(out)
+          PY
+
+      - name: Commit and tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --tags
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add Cargo.toml Cargo.lock
+          if ! git diff --cached --quiet; then
+            git commit -m "🔖 bump version to v${{ steps.set_tag.outputs.version }}"
+          fi
+          if git rev-parse "v${{ steps.set_tag.outputs.version }}" >/dev/null 2>&1; then
+            echo "Tag v${{ steps.set_tag.outputs.version }} already exists."
+            exit 1
+          fi
+          git tag "v${{ steps.set_tag.outputs.version }}"
+          git push origin main --tags
+
   build:
+    needs: prepare
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         os: [ubuntu-22.04, macos-14, windows-2022]
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.release_tag }}
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Build release
@@ -53,7 +121,7 @@ jobs:
 
   release:
     runs-on: ubuntu-22.04
-    needs: build
+    needs: [prepare, build]
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v4
@@ -62,8 +130,9 @@ jobs:
       - name: Create GitHub release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: v${{ inputs.version }}
-          name: v${{ inputs.version }}
+          tag_name: ${{ needs.prepare.outputs.release_tag }}
+          name: ${{ needs.prepare.outputs.release_tag }}
+          generate_release_notes: true
           files: dist/**/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
