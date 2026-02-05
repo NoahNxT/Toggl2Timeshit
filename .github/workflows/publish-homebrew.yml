@@ -1,4 +1,4 @@
-name: 📦 Publish Packages
+name: 🍺 Publish Homebrew
 
 on:
   release:
@@ -16,7 +16,7 @@ permissions:
   contents: read
 
 jobs:
-  homebrew_scoop:
+  homebrew:
     if: ${{ github.event_name == 'release' || github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-22.04
     steps:
@@ -34,10 +34,10 @@ jobs:
           elif [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ github.event.inputs.tag }}" ]]; then
             echo "RELEASE_TAG=${{ github.event.inputs.tag }}" >> "$GITHUB_ENV"
           elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            tag=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases/latest | python -c "import sys, json; print(json.load(sys.stdin)['tag_name'])")
+            tag=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases/latest | python3 -c "import sys, json; print(json.load(sys.stdin)['tag_name'])")
             echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
           else
-            tag=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases/latest | python -c "import sys, json; print(json.load(sys.stdin)['tag_name'])")
+            tag=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases/latest | python3 -c "import sys, json; print(json.load(sys.stdin)['tag_name'])")
             echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
           fi
 
@@ -47,10 +47,6 @@ jobs:
           PACKAGES_TOKEN: ${{ secrets.PACKAGES_REPO_TOKEN }}
         run: |
           set -euo pipefail
-          if [[ -z "${PACKAGES_TOKEN}" ]]; then
-            echo "PACKAGES_REPO_TOKEN not set; skipping."
-            exit 0
-          fi
           default_branch=$(git ls-remote --symref "https://x-access-token:${PACKAGES_TOKEN}@github.com/NoahNxT/homebrew-nxt-solutions-packages.git" HEAD | \
             awk '/^ref:/ {print $2}' | sed 's@refs/heads/@@')
           if [[ -z "${default_branch}" ]]; then
@@ -62,7 +58,6 @@ jobs:
             done
           fi
           if [[ -z "${default_branch}" ]]; then
-            echo "Packages repo has no default branch yet. Bootstrapping main."
             rm -rf nxt-solutions-packages
             mkdir nxt-solutions-packages
             cd nxt-solutions-packages
@@ -78,9 +73,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release download "$RELEASE_TAG" -R "${{ github.repository }}" -p "timeshit-*.tar.gz" -p "timeshit-*.zip" -D /tmp/releases
+          gh release download "$RELEASE_TAG" -R "${{ github.repository }}" -p "timeshit-*.tar.gz" -D /tmp/releases
 
-      - name: Generate Homebrew formula and Scoop manifest
+      - name: Generate Homebrew formula
         working-directory: nxt-solutions-packages
         run: |
           tag="${RELEASE_TAG}"
@@ -89,24 +84,16 @@ jobs:
           shopt -s nocaseglob nullglob
           linux_candidates=(/tmp/releases/timeshit*linux*.tar.gz)
           mac_candidates=(/tmp/releases/timeshit*macos*.tar.gz /tmp/releases/timeshit*mac*.tar.gz)
-          win_candidates=(/tmp/releases/timeshit*windows*.zip)
           linux_tar="${linux_candidates[0]:-}"
           mac_tar="${mac_candidates[0]:-}"
-          win_zip="${win_candidates[0]:-}"
-
-          if [[ -z "$linux_tar" || -z "$mac_tar" || -z "$win_zip" ]]; then
-            echo "Missing release assets. Expected linux/macos tar.gz and windows zip in /tmp/releases."
-            echo "Found:"
+          if [[ -z "$linux_tar" || -z "$mac_tar" ]]; then
+            echo "Missing release assets for Homebrew."
             ls -la /tmp/releases || true
             exit 1
           fi
-
           linux_sha=$(shasum -a 256 "$linux_tar" | awk '{print $1}')
           mac_sha=$(shasum -a 256 "$mac_tar" | awk '{print $1}')
-          win_sha=$(shasum -a 256 "$win_zip" | awk '{print $1}')
-
-          mkdir -p Formula bucket
-
+          mkdir -p Formula
           cat > Formula/timeshit.rb <<EOF
 class Timeshit < Formula
   desc "Toggl Track to timesheet TUI"
@@ -129,28 +116,12 @@ class Timeshit < Formula
 end
 EOF
 
-          cat > bucket/timeshit.json <<EOF
-{
-  "version": "${version}",
-  "description": "Toggl Track to timesheet TUI",
-  "homepage": "https://github.com/${{ github.repository }}",
-  "license": "MIT",
-  "architecture": {
-    "64bit": {
-      "url": "https://github.com/${{ github.repository }}/releases/download/${tag}/timeshit-windows.zip",
-      "hash": "${win_sha}"
-    }
-  },
-  "bin": "timeshit.exe"
-}
-EOF
-
       - name: Commit and push
         working-directory: nxt-solutions-packages
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
-          git add Formula/timeshit.rb bucket/timeshit.json
+          git add Formula/timeshit.rb
           if git diff --cached --quiet; then
             echo "No changes to commit."
             exit 0
