@@ -41,11 +41,34 @@ Recommended: Cloudsmith repo and API key for publishing `.deb` and `.rpm`.
 1. Create a Cloudsmith account and a **Debian** repository.
 2. Add repo variable:
    - `CLOUDSMITH_REPO` (e.g. `nxt-solutions/timeshit`)
-   - `CLOUDSMITH_DISTRO` (e.g. `ubuntu`)
-   - `CLOUDSMITH_RELEASE` (e.g. `jammy`)
+   - `CLOUDSMITH_DISTRO` (e.g. `debian` or `ubuntu`)
+   - `CLOUDSMITH_RELEASE` (e.g. `bookworm` for Debian 12, `bullseye` for Debian 11, or `jammy` for Ubuntu 22.04)
 3. Add repo secret:
    - `CLOUDSMITH_API_KEY`
 4. On release, GitHub Actions builds a `.deb` and uploads it to Cloudsmith.
+
+Tip: to see valid distro/release pairs for your repo, run:
+```
+cloudsmith list distros deb
+```
+
+### APT install (end users)
+```bash
+curl -1sLf 'https://dl.cloudsmith.io/public/nxt-solutions/timeshit/setup.deb.sh' | sudo -E bash
+sudo apt-get update
+sudo apt-get install timeshit
+```
+
+Install a specific version:
+```bash
+sudo apt-get install timeshit=1.3.5-1
+```
+
+Force distro/codename (if needed):
+```bash
+curl -1sLf 'https://dl.cloudsmith.io/public/nxt-solutions/timeshit/setup.deb.sh' \
+  | sudo -E distro=debian codename=bookworm bash
+```
 
 ## AUR (Arch)
 Requires AUR account and an SSH key for pushing package updates.
