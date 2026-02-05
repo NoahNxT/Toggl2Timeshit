@@ -45,7 +45,6 @@ jobs:
         shell: pwsh
         env:
           PACKAGE_ID: ${{ vars.WINGET_PACKAGE_ID }}
-          PACKAGE_NAME: ${{ vars.WINGET_PACKAGE_NAME }}
         run: |
           $tag = $env:RELEASE_TAG
           $version = $tag.TrimStart("v")
@@ -53,14 +52,11 @@ jobs:
 
           $args = @(
             "update",
-            $env:PACKAGE_ID,
-            "-u", $url,
-            "-v", $version,
-            "-t", "${{ secrets.WINGET_TOKEN }}",
-            "--submit"
+            "--submit",
+            "--token", "${{ secrets.WINGET_TOKEN }}",
+            "--urls", $url,
+            "--version", $version,
+            $env:PACKAGE_ID
           )
-          if ($env:PACKAGE_NAME) {
-            $args += @("--package-name", $env:PACKAGE_NAME)
-          }
 
           & .\wingetcreate.exe @args
