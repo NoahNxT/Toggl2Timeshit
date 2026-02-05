@@ -7,6 +7,10 @@ on:
     workflows: ["🔖 Release TUI"]
     types: [completed]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish (e.g. v1.3.6). Leave empty to use latest."
+        required: false
 
 permissions:
   contents: read
@@ -33,6 +37,8 @@ jobs:
         run: |
           if ("${{ github.event_name }}" -eq "release") {
             $tag = "${{ github.event.release.tag_name }}"
+          } elseif ("${{ github.event_name }}" -eq "workflow_dispatch" -and "${{ github.event.inputs.tag }}") {
+            $tag = "${{ github.event.inputs.tag }}"
           } elseif ("${{ github.event_name }}" -eq "workflow_dispatch") {
             $tag = (Invoke-RestMethod -Uri "https://api.github.com/repos/${{ github.repository }}/releases/latest").tag_name
           } else {
