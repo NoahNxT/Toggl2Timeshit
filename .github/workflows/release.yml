@@ -31,6 +31,16 @@ jobs:
           if [[ "$RUNNER_OS" == "Windows" ]]; then
             cp target/release/timeshit.exe dist/
             powershell -Command "Compress-Archive -Path dist\\timeshit.exe -DestinationPath dist\\timeshit-windows.zip"
+          elif [[ "$RUNNER_OS" == "macOS" ]]; then
+            cp target/release/timeshit dist/timeshit-${RUNNER_OS}
+            tar -czf dist/timeshit-${RUNNER_OS}.tar.gz -C dist timeshit-${RUNNER_OS}
+            rm -rf pkgroot
+            mkdir -p pkgroot/usr/local/bin
+            cp target/release/timeshit pkgroot/usr/local/bin/timeshit
+            pkgbuild --identifier com.nxtsolutions.timeshit \
+              --version "${{ inputs.version }}" \
+              --root pkgroot \
+              dist/timeshit-macos.pkg
           else
             cp target/release/timeshit dist/timeshit-${RUNNER_OS}
             tar -czf dist/timeshit-${RUNNER_OS}.tar.gz -C dist timeshit-${RUNNER_OS}
