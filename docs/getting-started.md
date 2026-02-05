@@ -19,9 +19,7 @@ target/release/timeshit
 You can authenticate in three ways:
 
 1. **In-app login**
-   ```bash
-   timeshit login
-   ```
+   - Open Settings → Integrations and paste your Toggl token.
 2. **Environment variable**
    ```bash
    export TOGGL_API_TOKEN="your-token"
@@ -36,13 +34,9 @@ You can authenticate in three ways:
 timeshit
 ```
 
-On launch, Timeshit checks GitHub Releases for updates. If a newer version is found, you must install it to continue. If the update check or download fails (offline/GitHub down), the app shows a warning and continues. After a successful update, the app exits and should be relaunched.
+On launch, Timeshit checks GitHub Releases for updates. If a newer version is found, the app shows an alert; press `u` to install. If the update check fails (offline/GitHub down), the app shows a warning and continues. After a successful update, the app exits and should be relaunched.
 
-Optional date flags:
-```bash
-timeshit --date YYYY-MM-DD
-timeshit --start-date YYYY-MM-DD --end-date YYYY-MM-DD
-```
+Date ranges are selected inside the TUI (`d`).
 
 ## First Launch Flow
 1. Login screen (if no token is available)

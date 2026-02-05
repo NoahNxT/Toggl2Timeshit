@@ -76,8 +76,8 @@ fn draw_update_prompt(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
         Line::from(format!("Latest version:  {}", latest)),
         Line::from(format!("Release tag:     {}", tag)),
         Line::from(""),
-        Line::from("This update is required to continue."),
-        Line::from("Press u to update now, q to quit."),
+        Line::from("Update available."),
+        Line::from("Press u to update now, Esc to dismiss."),
     ];
 
     if let Some(error) = app.update_error.as_ref() {
@@ -884,6 +884,10 @@ fn draw_help(frame: &mut Frame, area: Rect, theme: &Theme) {
         Row::new(vec![
             Cell::from(Span::styled("r", key_style)),
             Cell::from("Refresh"),
+        ]),
+        Row::new(vec![
+            Cell::from(Span::styled("u", key_style)),
+            Cell::from("Install update (when available)"),
         ]),
         Row::new(vec![
             Cell::from(Span::styled("s", key_style)),

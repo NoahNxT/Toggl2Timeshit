@@ -281,10 +281,10 @@ impl App {
 
         match update::check_for_update() {
             Ok(Some(info)) => {
+                let message = format!("Update available: v{} (press u to update)", info.latest);
                 self.update_info = Some(info);
-                self.update_resume_mode = Some(self.mode);
-                self.mode = Mode::UpdatePrompt;
-                self.status = None;
+                self.status = Some(message.clone());
+                self.set_toast(message, false);
             }
             Ok(None) => {}
             Err(err) => {
@@ -532,12 +532,16 @@ impl App {
     fn handle_update_prompt_input(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Char('u') | KeyCode::Enter => self.start_update(),
-            KeyCode::Char('q') | KeyCode::Esc => self.should_quit = true,
+            KeyCode::Char('q') => self.should_quit = true,
+            KeyCode::Esc => self.resume_from_update(),
             _ => {}
         }
     }
 
     fn start_update(&mut self) {
+        if self.update_resume_mode.is_none() {
+            self.update_resume_mode = Some(self.mode);
+        }
         self.mode = Mode::Updating;
         self.needs_update_install = true;
         self.update_error = None;
@@ -589,6 +593,15 @@ impl App {
             KeyCode::Char('s') => self.enter_settings(),
             KeyCode::Char('o') | KeyCode::Char('O') => self.enter_rollups(),
             KeyCode::Char('d') => self.enter_date_input(DateInputMode::Range),
+            KeyCode::Char('u') | KeyCode::Char('U') => {
+                if self.update_info.is_some() {
+                    self.start_update();
+                } else if update::should_check_updates() {
+                    self.set_toast("No update available.", false);
+                } else {
+                    self.set_toast("Updates are managed by your package manager.", false);
+                }
+            }
             KeyCode::Char('c') | KeyCode::Char('C') => self.copy_client_entries_to_clipboard(),
             KeyCode::Char('v') | KeyCode::Char('V') => self.copy_project_entries_to_clipboard(),
             KeyCode::Char('x') | KeyCode::Char('X') => self.copy_entries_to_clipboard(true),

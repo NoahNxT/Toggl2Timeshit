@@ -1,7 +1,6 @@
 use std::error::Error;
 use std::time::Duration;
 
-use clap::{Args, Parser, Subcommand};
 use crossterm::event::{self, Event};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::ExecutableCommand;
@@ -20,65 +19,11 @@ mod ui;
 mod update;
 
 use app::App;
-use dates::{parse_date, DateRange};
-
-#[derive(Parser, Debug)]
-#[command(author, version, about)]
-struct Cli {
-    #[command(subcommand)]
-    command: Option<Commands>,
-
-    #[command(flatten)]
-    dates: DateArgs,
-}
-
-#[derive(Args, Debug, Default)]
-struct DateArgs {
-    #[arg(short = 'd', long = "date", global = true)]
-    date: Option<String>,
-    #[arg(short = 's', long = "start-date", global = true)]
-    start_date: Option<String>,
-    #[arg(short = 'e', long = "end-date", global = true)]
-    end_date: Option<String>,
-}
-
-#[derive(Subcommand, Debug)]
-enum Commands {
-    Login,
-    List,
-}
-
-fn build_date_range(args: &DateArgs) -> Result<DateRange, String> {
-    let date = match &args.date {
-        Some(value) => Some(parse_date(value)?),
-        None => None,
-    };
-    let start_date = match &args.start_date {
-        Some(value) => Some(parse_date(value)?),
-        None => None,
-    };
-    let end_date = match &args.end_date {
-        Some(value) => Some(parse_date(value)?),
-        None => None,
-    };
-
-    if date.is_none() && start_date.is_none() && end_date.is_some() {
-        return Err("End date requires a start date.".to_string());
-    }
-
-    DateRange::from_options(date, start_date, end_date)
-}
+use dates::DateRange;
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let cli = Cli::parse();
-    let date_range = match build_date_range(&cli.dates) {
-        Ok(range) => range,
-        Err(err) => {
-            eprintln!("{err}");
-            return Ok(());
-        }
-    };
-    let force_login = matches!(cli.command, Some(Commands::Login));
+    let date_range = DateRange::today();
+    let force_login = false;
 
     let mut stdout = std::io::stdout();
     enable_raw_mode()?;
@@ -88,7 +33,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut terminal = Terminal::new(backend)?;
     terminal.clear()?;
 
-    let needs_update_check = cli.command.is_none() && update::should_check_updates();
+    let needs_update_check = update::should_check_updates();
     let mut app = App::new(date_range, force_login, needs_update_check);
 
     loop {

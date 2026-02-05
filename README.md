@@ -93,11 +93,7 @@ Binary: `target/release/timeshit`
 - **Package manager installs** should be updated via the package manager (brew/apt/choco/scoop/winget).
 
 ## Authentication
-Use the login flow or set an environment variable:
-```bash
-timeshit login
-```
-or
+Use the in-app settings (Settings → Integrations) or set an environment variable:
 ```bash
 export TOGGL_API_TOKEN="your-token"
 ```
@@ -108,11 +104,7 @@ Token file: `~/.toggl2tsc`
 timeshit
 ```
 
-Optional flags:
-```bash
-timeshit --date YYYY-MM-DD
-timeshit --start-date YYYY-MM-DD --end-date YYYY-MM-DD
-```
+Date range selection is done inside the TUI (`d`).
 
 ## Keybinds (core)
 - `h` help

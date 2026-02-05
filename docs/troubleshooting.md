@@ -6,7 +6,7 @@
 - Check [Caching & Quotas](caching.md).
 
 ## “Invalid token. Please login.”
-- Update your token via `timeshit login` or Settings → Integrations.
+- Update your token via Settings → Integrations.
 
 ## No data shown
 - Ensure you selected the correct workspace.
