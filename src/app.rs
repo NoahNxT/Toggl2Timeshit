@@ -4,14 +4,12 @@ use ratatui::widgets::ListState;
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
-use crate::dates::{parse_date, DateRange};
-use crate::grouping::{group_entries, GroupedEntry, GroupedProject};
+use crate::dates::{DateRange, parse_date};
+use crate::grouping::{GroupedEntry, GroupedProject, group_entries};
 use crate::models::{Client as TogglClientModel, Project, TimeEntry, Workspace};
-use crate::rollups::{build_rollups, DailyTotal, PeriodRollup, Rollups};
+use crate::rollups::{DailyTotal, PeriodRollup, Rollups, build_rollups};
 use crate::rounding::{RoundingConfig, RoundingMode};
-use crate::storage::{
-    self, CacheFile, CachedData, QuotaFile, ThemePreference,
-};
+use crate::storage::{self, CacheFile, CachedData, QuotaFile, ThemePreference};
 use crate::toggl::{TogglClient, TogglError};
 use crate::update::{self, UpdateInfo};
 use arboard::Clipboard;
@@ -156,7 +154,11 @@ impl App {
         } else {
             storage::read_token()
         };
-        let mode = if token.is_some() { Mode::Loading } else { Mode::Login };
+        let mode = if token.is_some() {
+            Mode::Loading
+        } else {
+            Mode::Login
+        };
         let theme = storage::read_theme().unwrap_or(ThemePreference::Terminal);
         let target_hours = storage::read_target_hours().unwrap_or(8.0);
         let rounding = storage::read_rounding();
@@ -312,9 +314,7 @@ impl App {
         let current_exe = match std::env::current_exe() {
             Ok(path) => path,
             Err(err) => {
-                self.handle_update_failure(format!(
-                    "Failed to locate current binary: {err}"
-                ));
+                self.handle_update_failure(format!("Failed to locate current binary: {err}"));
                 return;
             }
         };
@@ -334,10 +334,7 @@ impl App {
 
         match install_result {
             Ok(()) => {
-                self.exit_message = Some(format!(
-                    "Updated to v{}. Please relaunch.",
-                    info.latest
-                ));
+                self.exit_message = Some(format!("Updated to v{}. Please relaunch.", info.latest));
                 self.should_quit = true;
             }
             Err(err) => {
@@ -433,10 +430,11 @@ impl App {
             None => return,
         };
 
-        let client_names = match self.resolve_client_names(&client, allow_api, workspace.id, &projects) {
-            Some(names) => names,
-            None => return,
-        };
+        let client_names =
+            match self.resolve_client_names(&client, allow_api, workspace.id, &projects) {
+                Some(names) => names,
+                None => return,
+            };
 
         let (start, end) = self.date_range.as_rfc3339();
         let time_entries = match self.resolve_time_entries(
@@ -622,7 +620,9 @@ impl App {
             {
                 self.copy_entry_hours_to_clipboard();
             }
-            KeyCode::Esc if self.dashboard_focus == DashboardFocus::Entries => self.exit_entries_focus(),
+            KeyCode::Esc if self.dashboard_focus == DashboardFocus::Entries => {
+                self.exit_entries_focus()
+            }
             KeyCode::Up => match self.dashboard_focus {
                 DashboardFocus::Projects => self.select_previous_project(),
                 DashboardFocus::Entries => self.select_previous_entry(),
@@ -707,10 +707,9 @@ impl App {
                     }
                     self.token = Some(self.input.trim().to_string());
                     self.token_hash = Some(storage::hash_token(self.input.trim()));
-                    self.cache = self
-                        .token_hash
-                        .as_ref()
-                        .and_then(|hash| storage::read_cache().filter(|cache| cache.token_hash == *hash));
+                    self.cache = self.token_hash.as_ref().and_then(|hash| {
+                        storage::read_cache().filter(|cache| cache.token_hash == *hash)
+                    });
                     self.input.clear();
                     self.mode = Mode::Loading;
                     self.refresh_intent = RefreshIntent::CacheOnly;
@@ -969,7 +968,9 @@ impl App {
             }
         }
 
-        let parsed: f64 = value.parse().map_err(|_| "Invalid number format.".to_string())?;
+        let parsed: f64 = value
+            .parse()
+            .map_err(|_| "Invalid number format.".to_string())?;
         if parsed <= 0.0 {
             return Err("Target hours must be greater than 0.".to_string());
         }
@@ -978,12 +979,9 @@ impl App {
     }
 
     fn rebuild_grouped(&mut self) {
-        let selected_project_key = self.current_project().map(|project| {
-            (
-                project.client_name.clone(),
-                project.project_name.clone(),
-            )
-        });
+        let selected_project_key = self
+            .current_project()
+            .map(|project| (project.client_name.clone(), project.project_name.clone()));
         let selected_entry_key = self.current_entry().map(|entry| entry.description.clone());
 
         let grouped = group_entries(
@@ -1005,11 +1003,9 @@ impl App {
         self.ensure_rollup_selections();
 
         if let Some((client_name, project_name)) = selected_project_key {
-            if let Some(index) = self
-                .grouped
-                .iter()
-                .position(|project| project.client_name == client_name && project.project_name == project_name)
-            {
+            if let Some(index) = self.grouped.iter().position(|project| {
+                project.client_name == client_name && project.project_name == project_name
+            }) {
                 self.project_state.select(Some(index));
             }
         }
@@ -1018,7 +1014,11 @@ impl App {
 
         if let Some(entry_desc) = selected_entry_key {
             if let Some(project) = self.current_project() {
-                if let Some(index) = project.entries.iter().position(|entry| entry.description == entry_desc) {
+                if let Some(index) = project
+                    .entries
+                    .iter()
+                    .position(|entry| entry.description == entry_desc)
+                {
                     self.entry_state.select(Some(index));
                 }
             }
@@ -1132,7 +1132,9 @@ impl App {
                 self.cache = self
                     .token_hash
                     .as_ref()
-                    .and_then(|hash| storage::read_cache().filter(|cache| cache.token_hash == *hash))
+                    .and_then(|hash| {
+                        storage::read_cache().filter(|cache| cache.token_hash == *hash)
+                    })
                     .or_else(|| self.token_hash.clone().map(storage::new_cache));
                 self.status = Some("Toggl token updated.".to_string());
                 self.set_toast("Token updated.", false);
@@ -1198,9 +1200,17 @@ impl App {
             .position(|value| *value == current)
             .unwrap_or(0);
         let next_index = if up {
-            if index == 0 { values.len() - 1 } else { index - 1 }
+            if index == 0 {
+                values.len() - 1
+            } else {
+                index - 1
+            }
         } else {
-            if index + 1 >= values.len() { 0 } else { index + 1 }
+            if index + 1 >= values.len() {
+                0
+            } else {
+                index + 1
+            }
         };
         self.settings_theme_draft = values[next_index];
     }
@@ -1208,11 +1218,22 @@ impl App {
     fn cycle_rounding_increment(&mut self, up: bool) {
         let values = [15u32, 30, 45, 60];
         let current = self.settings_rounding_draft.increment_minutes;
-        let index = values.iter().position(|value| *value == current).unwrap_or(0);
+        let index = values
+            .iter()
+            .position(|value| *value == current)
+            .unwrap_or(0);
         let next_index = if up {
-            if index == 0 { values.len() - 1 } else { index - 1 }
+            if index == 0 {
+                values.len() - 1
+            } else {
+                index - 1
+            }
         } else {
-            if index + 1 >= values.len() { 0 } else { index + 1 }
+            if index + 1 >= values.len() {
+                0
+            } else {
+                index + 1
+            }
         };
         self.settings_rounding_draft.increment_minutes = values[next_index];
     }
@@ -1220,11 +1241,22 @@ impl App {
     fn cycle_rounding_mode(&mut self, up: bool) {
         let values = [RoundingMode::Closest, RoundingMode::Up, RoundingMode::Down];
         let current = self.settings_rounding_draft.mode;
-        let index = values.iter().position(|value| *value == current).unwrap_or(0);
+        let index = values
+            .iter()
+            .position(|value| *value == current)
+            .unwrap_or(0);
         let next_index = if up {
-            if index == 0 { values.len() - 1 } else { index - 1 }
+            if index == 0 {
+                values.len() - 1
+            } else {
+                index - 1
+            }
         } else {
-            if index + 1 >= values.len() { 0 } else { index + 1 }
+            if index + 1 >= values.len() {
+                0
+            } else {
+                index + 1
+            }
         };
         self.settings_rounding_draft.mode = values[next_index];
     }
@@ -1559,14 +1591,16 @@ impl App {
     }
 
     fn ensure_rollup_day_selection(&mut self) {
-        let count = self.rollup_selected_period().map(|period| period.days).unwrap_or(0);
+        let count = self
+            .rollup_selected_period()
+            .map(|period| period.days)
+            .unwrap_or(0);
         if count == 0 {
             self.rollup_day_state.select(None);
             return;
         }
         let selected = self.rollup_day_state.selected().unwrap_or(0);
-        self.rollup_day_state
-            .select(Some(selected.min(count - 1)));
+        self.rollup_day_state.select(Some(selected.min(count - 1)));
     }
 
     fn ensure_rollup_selections(&mut self) {
@@ -1576,7 +1610,10 @@ impl App {
     }
 
     fn reset_rollup_day_selection(&mut self) {
-        let count = self.rollup_selected_period().map(|period| period.days).unwrap_or(0);
+        let count = self
+            .rollup_selected_period()
+            .map(|period| period.days)
+            .unwrap_or(0);
         if count == 0 {
             self.rollup_day_state.select(None);
         } else {
@@ -1591,11 +1628,7 @@ impl App {
         }
         let state = self.rollup_state_for_view_mut(self.rollup_view);
         let selected = state.selected().unwrap_or(0);
-        let new_index = if selected == 0 {
-            len - 1
-        } else {
-            selected - 1
-        };
+        let new_index = if selected == 0 { len - 1 } else { selected - 1 };
         state.select(Some(new_index));
         self.reset_rollup_day_selection();
     }
@@ -1607,17 +1640,15 @@ impl App {
         }
         let state = self.rollup_state_for_view_mut(self.rollup_view);
         let selected = state.selected().unwrap_or(0);
-        let new_index = if selected + 1 >= len {
-            0
-        } else {
-            selected + 1
-        };
+        let new_index = if selected + 1 >= len { 0 } else { selected + 1 };
         state.select(Some(new_index));
         self.reset_rollup_day_selection();
     }
 
     fn rollup_days_len(&self) -> usize {
-        self.rollup_selected_period().map(|period| period.days).unwrap_or(0)
+        self.rollup_selected_period()
+            .map(|period| period.days)
+            .unwrap_or(0)
     }
 
     fn select_previous_rollup_day(&mut self) {
@@ -1627,7 +1658,11 @@ impl App {
             return;
         }
         let selected = self.rollup_day_state.selected().unwrap_or(0);
-        let new_index = if selected == 0 { count - 1 } else { selected - 1 };
+        let new_index = if selected == 0 {
+            count - 1
+        } else {
+            selected - 1
+        };
         self.rollup_day_state.select(Some(new_index));
     }
 
@@ -1638,7 +1673,11 @@ impl App {
             return;
         }
         let selected = self.rollup_day_state.selected().unwrap_or(0);
-        let new_index = if selected + 1 >= count { 0 } else { selected + 1 };
+        let new_index = if selected + 1 >= count {
+            0
+        } else {
+            selected + 1
+        };
         self.rollup_day_state.select(Some(new_index));
     }
 
@@ -1665,7 +1704,10 @@ impl App {
             }
         };
 
-        self.write_clipboard(format!("{:.2}", selected.total_hours), "Copied entry hours.");
+        self.write_clipboard(
+            format!("{:.2}", selected.total_hours),
+            "Copied entry hours.",
+        );
     }
 
     fn copy_entries_to_clipboard(&mut self, include_project: bool) {
@@ -1699,13 +1741,19 @@ impl App {
             for project in &self.grouped {
                 if project.client_name.as_deref() == Some(client_name.as_str()) {
                     for entry in &project.entries {
-                        lines.push(format!("• {} ({:.2}h)", entry.description, entry.total_hours));
+                        lines.push(format!(
+                            "• {} ({:.2}h)",
+                            entry.description, entry.total_hours
+                        ));
                     }
                 }
             }
         } else {
             for entry in &selected.entries {
-                lines.push(format!("• {} ({:.2}h)", entry.description, entry.total_hours));
+                lines.push(format!(
+                    "• {} ({:.2}h)",
+                    entry.description, entry.total_hours
+                ));
             }
         }
 
@@ -1750,9 +1798,7 @@ impl App {
     }
 
     fn write_clipboard(&mut self, text: String, success_message: &str) {
-        match Clipboard::new()
-            .and_then(|mut clipboard| clipboard.set_text(text))
-        {
+        match Clipboard::new().and_then(|mut clipboard| clipboard.set_text(text)) {
             Ok(_) => {
                 self.status = Some(success_message.to_string());
                 self.set_toast(success_message, false);
@@ -1806,7 +1852,10 @@ impl App {
         } else {
             for project in &self.grouped {
                 for entry in &project.entries {
-                    lines.push(format!("• {} ({:.2}h)", entry.description, entry.total_hours));
+                    lines.push(format!(
+                        "• {} ({:.2}h)",
+                        entry.description, entry.total_hours
+                    ));
                 }
             }
         }
@@ -1955,7 +2004,9 @@ impl App {
     }
 
     fn cached_workspaces(&self) -> Option<CachedData<Vec<Workspace>>> {
-        self.cache.as_ref().and_then(|cache| cache.workspaces.clone())
+        self.cache
+            .as_ref()
+            .and_then(|cache| cache.workspaces.clone())
     }
 
     fn cached_projects(&self, workspace_id: u64) -> Option<CachedData<Vec<Project>>> {
@@ -2236,10 +2287,7 @@ impl App {
     }
 
     fn quota_exhausted_message(&self) -> String {
-        format!(
-            "{} No cached data available.",
-            self.quota_message()
-        )
+        format!("{} No cached data available.", self.quota_message())
     }
 
     fn cache_status_message(&self, reason: CacheReason, cached_at: Option<&str>) -> String {
@@ -2249,10 +2297,7 @@ impl App {
             .unwrap_or_default();
         match reason {
             CacheReason::CacheOnly => format!("Using cached data{updated}."),
-            CacheReason::Quota => format!(
-                "{} Using cached data{updated}.",
-                self.quota_message()
-            ),
+            CacheReason::Quota => format!("{} Using cached data{updated}.", self.quota_message()),
             CacheReason::ApiError => format!("Using cached data due to API error{updated}."),
         }
     }
@@ -2262,10 +2307,7 @@ impl App {
         if remaining == 0 {
             format!("Quota reached ({}/{}).", self.quota.used_calls, CALL_LIMIT)
         } else {
-            format!(
-                "Quota low (remaining {}/{}).",
-                remaining, CALL_LIMIT
-            )
+            format!("Quota low (remaining {}/{}).", remaining, CALL_LIMIT)
         }
     }
 }

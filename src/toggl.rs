@@ -1,5 +1,5 @@
-use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 use reqwest::blocking::Client;
 use serde::de::DeserializeOwned;
 
@@ -31,11 +31,9 @@ impl TogglClient {
 
     pub fn fetch_time_entries(&self, start: &str, end: &str) -> Result<Vec<TimeEntry>, TogglError> {
         let base = "https://api.track.toggl.com/api/v9/me/time_entries";
-        let url = reqwest::Url::parse_with_params(
-            base,
-            &[("start_date", start), ("end_date", end)],
-        )
-        .map_err(|err| TogglError::Network(err.to_string()))?;
+        let url =
+            reqwest::Url::parse_with_params(base, &[("start_date", start), ("end_date", end)])
+                .map_err(|err| TogglError::Network(err.to_string()))?;
         self.fetch(url.to_string())
     }
 

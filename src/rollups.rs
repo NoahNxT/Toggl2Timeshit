@@ -1,8 +1,8 @@
-use chrono::{Datelike, DateTime, Duration, Local, NaiveDate};
+use chrono::{DateTime, Datelike, Duration, Local, NaiveDate};
 use std::collections::HashMap;
 
 use crate::models::TimeEntry;
-use crate::rounding::{round_seconds, RoundingConfig};
+use crate::rounding::{RoundingConfig, round_seconds};
 
 #[derive(Debug, Clone)]
 pub struct DailyTotal {
@@ -35,7 +35,9 @@ pub fn build_rollups(
     let mut totals: HashMap<NaiveDate, i64> = HashMap::new();
 
     for entry in entries {
-        let Some(date) = parse_entry_date(entry) else { continue };
+        let Some(date) = parse_entry_date(entry) else {
+            continue;
+        };
         if date < start || date > end {
             continue;
         }
@@ -72,7 +74,10 @@ fn build_daily_totals(
     let mut current = start;
     while current <= end {
         let seconds = *totals.get(&current).unwrap_or(&0);
-        daily.push(DailyTotal { date: current, seconds });
+        daily.push(DailyTotal {
+            date: current,
+            seconds,
+        });
         current = current.succ_opt().unwrap_or(current + Duration::days(1));
     }
     daily

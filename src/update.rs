@@ -7,10 +7,10 @@ mod enabled {
     use std::env;
     use std::fs::{self, File};
     use std::io;
-    use std::path::PathBuf;
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
+    use std::path::PathBuf;
     use std::time::Duration;
     use tar::Archive;
     use tempfile::Builder;
@@ -100,8 +100,7 @@ mod enabled {
 
         let tag = release.tag_name.trim().to_string();
         let trimmed = tag.trim_start_matches('v');
-        let latest =
-            Version::parse(trimmed).map_err(|err| UpdateError::Parse(err.to_string()))?;
+        let latest = Version::parse(trimmed).map_err(|err| UpdateError::Parse(err.to_string()))?;
         let current = current_version();
 
         if latest <= current {
@@ -146,8 +145,7 @@ mod enabled {
         let mut archive_file =
             File::create(&archive_path).map_err(|err| UpdateError::Io(err.to_string()))?;
         let mut reader = response;
-        io::copy(&mut reader, &mut archive_file)
-            .map_err(|err| UpdateError::Io(err.to_string()))?;
+        io::copy(&mut reader, &mut archive_file).map_err(|err| UpdateError::Io(err.to_string()))?;
 
         let archive_file =
             File::open(&archive_path).map_err(|err| UpdateError::Io(err.to_string()))?;
@@ -214,11 +212,7 @@ mod enabled {
             "linux" => "timeshit-linux.tar.gz",
             "macos" => "timeshit-macos.tar.gz",
             "windows" => "timeshit-windows.zip",
-            other => {
-                return Err(UpdateError::Unsupported(format!(
-                    "Unsupported OS: {other}"
-                )))
-            }
+            other => return Err(UpdateError::Unsupported(format!("Unsupported OS: {other}"))),
         };
         Ok(asset.to_string())
     }
@@ -228,11 +222,7 @@ mod enabled {
             "linux" => "timeshit",
             "macos" => "timeshit",
             "windows" => "timeshit.exe",
-            other => {
-                return Err(UpdateError::Unsupported(format!(
-                    "Unsupported OS: {other}"
-                )))
-            }
+            other => return Err(UpdateError::Unsupported(format!("Unsupported OS: {other}"))),
         };
         Ok(binary.to_string())
     }
@@ -294,22 +284,16 @@ mod enabled {
     #[cfg(unix)]
     fn install_update_unix(staged_path: &Path, current_exe: &Path) -> Result<(), UpdateError> {
         fs::copy(staged_path, current_exe).map_err(|err| UpdateError::Io(err.to_string()))?;
-        fs::set_permissions(
-            current_exe,
-            fs::Permissions::from_mode(0o755),
-        )
-        .map_err(|err| UpdateError::Io(err.to_string()))?;
+        fs::set_permissions(current_exe, fs::Permissions::from_mode(0o755))
+            .map_err(|err| UpdateError::Io(err.to_string()))?;
         Ok(())
     }
 
     #[cfg(windows)]
     fn install_update_windows(staged_path: &Path, current_exe: &Path) -> Result<(), UpdateError> {
-        let temp_path = current_exe
-            .with_extension("exe.new");
-        fs::copy(staged_path, &temp_path)
-            .map_err(|err| UpdateError::Io(err.to_string()))?;
-        fs::rename(temp_path, current_exe)
-            .map_err(|err| UpdateError::Io(err.to_string()))?;
+        let temp_path = current_exe.with_extension("exe.new");
+        fs::copy(staged_path, &temp_path).map_err(|err| UpdateError::Io(err.to_string()))?;
+        fs::rename(temp_path, current_exe).map_err(|err| UpdateError::Io(err.to_string()))?;
         Ok(())
     }
 }

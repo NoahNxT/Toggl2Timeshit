@@ -124,4 +124,3 @@ mod tests {
         assert_eq!(round_seconds(-449, &cfg), 0);
     }
 }
-

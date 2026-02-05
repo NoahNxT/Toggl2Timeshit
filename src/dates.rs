@@ -1,5 +1,5 @@
-use chrono::{Datelike, DateTime, Local, NaiveDate, TimeZone};
 use chrono::Duration;
+use chrono::{DateTime, Datelike, Local, NaiveDate, TimeZone};
 
 #[derive(Debug, Clone)]
 pub struct DateRange {
@@ -98,7 +98,8 @@ pub fn parse_date(value: &str) -> Result<NaiveDate, String> {
 }
 
 fn local_datetime(date: NaiveDate, hour: u32, minute: u32, second: u32) -> DateTime<Local> {
-    let result = Local.with_ymd_and_hms(date.year(), date.month(), date.day(), hour, minute, second);
+    let result =
+        Local.with_ymd_and_hms(date.year(), date.month(), date.day(), hour, minute, second);
     result
         .earliest()
         .or_else(|| result.latest())
