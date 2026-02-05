@@ -66,6 +66,7 @@ Recommended: Cloudsmith repo and API key for publishing `.deb` and `.rpm`.
    - `CLOUDSMITH_REPO` (e.g. `nxt-solutions/timeshit`)
    - `CLOUDSMITH_DISTRO` (e.g. `debian` or `ubuntu`)
    - `CLOUDSMITH_RELEASE` (e.g. `bookworm` for Debian 12, `bullseye` for Debian 11, or `jammy` for Ubuntu 22.04)
+   - Optional: `CLOUDSMITH_TARGETS` (comma-separated targets, e.g. `nxt-solutions/timeshit/ubuntu/noble,nxt-solutions/timeshit/debian/bookworm`)
 3. Add repo secret:
    - `CLOUDSMITH_API_KEY`
 4. On release, GitHub Actions builds a `.deb` and uploads it to Cloudsmith.
@@ -86,6 +87,11 @@ Troubleshooting (command not found):
 ```bash
 dpkg -s timeshit
 which timeshit
+```
+If it’s installed but not in PATH:
+```bash
+/usr/bin/timeshit
+hash -r
 ```
 If `apt` can’t find the package, force the distro/codename to match what you publish:
 ```bash

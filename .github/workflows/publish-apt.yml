@@ -57,8 +57,12 @@ jobs:
 
       - name: Guard missing Cloudsmith config
         run: |
-          if [[ -z "${{ secrets.CLOUDSMITH_API_KEY }}" || -z "${{ vars.CLOUDSMITH_REPO }}" || -z "${{ vars.CLOUDSMITH_DISTRO }}" || -z "${{ vars.CLOUDSMITH_RELEASE }}" ]]; then
-            echo "CLOUDSMITH_API_KEY or CLOUDSMITH_REPO not set; skipping."
+          if [[ -z "${{ secrets.CLOUDSMITH_API_KEY }}" ]]; then
+            echo "CLOUDSMITH_API_KEY not set; skipping."
+            exit 0
+          fi
+          if [[ -z "${{ vars.CLOUDSMITH_TARGETS }}" && ( -z "${{ vars.CLOUDSMITH_REPO }}" || -z "${{ vars.CLOUDSMITH_DISTRO }}" || -z "${{ vars.CLOUDSMITH_RELEASE }}" ) ]]; then
+            echo "CLOUDSMITH_TARGETS or CLOUDSMITH_REPO/CLOUDSMITH_DISTRO/CLOUDSMITH_RELEASE not set; skipping."
             exit 0
           fi
 
@@ -80,7 +84,18 @@ jobs:
           CLOUDSMITH_REPO: ${{ vars.CLOUDSMITH_REPO }}
           CLOUDSMITH_DISTRO: ${{ vars.CLOUDSMITH_DISTRO }}
           CLOUDSMITH_RELEASE: ${{ vars.CLOUDSMITH_RELEASE }}
+          CLOUDSMITH_TARGETS: ${{ vars.CLOUDSMITH_TARGETS }}
         run: |
           deb=$(ls target/debian/*.deb | head -n 1)
-          echo "Uploading $deb to $CLOUDSMITH_REPO ($CLOUDSMITH_DISTRO/$CLOUDSMITH_RELEASE)"
-          cloudsmith push deb "${CLOUDSMITH_REPO}/${CLOUDSMITH_DISTRO}/${CLOUDSMITH_RELEASE}" "$deb" -k "$CLOUDSMITH_API_KEY"
+          if [[ -n "${CLOUDSMITH_TARGETS}" ]]; then
+            targets="${CLOUDSMITH_TARGETS}"
+          else
+            targets="${CLOUDSMITH_REPO}/${CLOUDSMITH_DISTRO}/${CLOUDSMITH_RELEASE}"
+          fi
+          IFS=',' read -ra list <<< "${targets}"
+          for target in "${list[@]}"; do
+            target=$(echo "$target" | xargs)
+            [[ -z "$target" ]] && continue
+            echo "Uploading $deb to $target"
+            cloudsmith push deb "$target" "$deb" -k "$CLOUDSMITH_API_KEY"
+          done

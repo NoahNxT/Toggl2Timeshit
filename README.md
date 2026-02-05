@@ -63,6 +63,11 @@ If `timeshit` is not found after setup, verify the package is installed:
 dpkg -s timeshit
 which timeshit
 ```
+If `timeshit` is installed but not in PATH, run it directly:
+```bash
+/usr/bin/timeshit
+hash -r
+```
 If `apt` can’t find the package, force the distro/codename that matches your Cloudsmith publish target:
 ```bash
 curl -1sLf 'https://dl.cloudsmith.io/public/nxt-solutions/timeshit/setup.deb.sh' \
