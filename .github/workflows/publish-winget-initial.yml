@@ -30,6 +30,9 @@ jobs:
           } else {
             $tag = (Invoke-RestMethod -Uri "https://api.github.com/repos/${{ github.repository }}/releases/latest").tag_name
           }
+          if (-not $tag.StartsWith("v")) {
+            $tag = "v$tag"
+          }
           "RELEASE_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Checkout winget-pkgs
