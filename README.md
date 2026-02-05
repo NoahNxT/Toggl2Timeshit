@@ -26,6 +26,10 @@ If you previously installed the legacy Node package, you may need to unlink it:
 rm /opt/homebrew/bin/timeshit
 brew link --overwrite timeshit
 ```
+You can also remove the legacy global npm package:
+```bash
+npm remove -g toggl2timeshit
+```
 
 ### Windows
 **Chocolatey**
