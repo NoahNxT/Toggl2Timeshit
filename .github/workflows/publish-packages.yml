@@ -42,10 +42,21 @@ jobs:
           fi
 
       - name: Checkout packages repo
-        uses: actions/checkout@v4
-        with:
-          repository: NoahNxT/nxt-solutions-packages
-          token: ${{ secrets.PACKAGES_REPO_TOKEN }}
+        shell: bash
+        env:
+          PACKAGES_TOKEN: ${{ secrets.PACKAGES_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${PACKAGES_TOKEN}" ]]; then
+            echo "PACKAGES_REPO_TOKEN not set; skipping."
+            exit 0
+          fi
+          default_branch=$(curl -s -H "Authorization: token ${PACKAGES_TOKEN}" \
+            https://api.github.com/repos/NoahNxT/nxt-solutions-packages | \
+            python -c "import sys, json; print(json.load(sys.stdin).get('default_branch','master'))")
+          git clone "https://x-access-token:${PACKAGES_TOKEN}@github.com/NoahNxT/nxt-solutions-packages.git" \
+            --branch "${default_branch}" --depth 1
+          cd nxt-solutions-packages
 
       - name: Download release assets
         env:
@@ -54,6 +65,7 @@ jobs:
           gh release download "$RELEASE_TAG" -R "${{ github.repository }}" -p "timeshit-*.tar.gz" -p "timeshit-*.zip" -D /tmp/releases
 
       - name: Generate Homebrew formula and Scoop manifest
+        working-directory: nxt-solutions-packages
         run: |
           tag="${RELEASE_TAG}"
           version="${tag#v}"
@@ -112,6 +124,7 @@ jobs:
           EOF
 
       - name: Commit and push
+        working-directory: nxt-solutions-packages
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
