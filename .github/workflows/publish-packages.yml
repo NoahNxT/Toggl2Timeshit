@@ -107,11 +107,11 @@ jobs:
 
           mkdir -p Formula bucket
 
-          cat > Formula/timeshit.rb <<'EOF'
-          class Timeshit < Formula
-            desc "Toggl Track to timesheet TUI"
-            homepage "https://github.com/${{ github.repository }}"
-            version "${version}"
+          cat > Formula/timeshit.rb <<EOF
+class Timeshit < Formula
+  desc "Toggl Track to timesheet TUI"
+  homepage "https://github.com/${{ github.repository }}"
+  version "${version}"
 
             on_macos do
               url "https://github.com/${{ github.repository }}/releases/download/${tag}/timeshit-macos.tar.gz"
@@ -123,11 +123,11 @@ jobs:
               sha256 "${linux_sha}"
             end
 
-            def install
-              bin.install "timeshit"
-            end
-          end
-          EOF
+  def install
+    bin.install "timeshit"
+  end
+end
+EOF
 
           cat > bucket/timeshit.json <<EOF
           {
