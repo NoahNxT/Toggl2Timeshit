@@ -1,5 +1,5 @@
-use chrono::{Datelike, DateTime, Local, NaiveDate, TimeZone};
 use chrono::Duration;
+use chrono::{DateTime, Datelike, Local, NaiveDate, TimeZone};
 
 #[derive(Debug, Clone)]
 pub struct DateRange {
@@ -25,13 +25,6 @@ impl DateRange {
         Self { start, end, label }
     }
 
-    pub fn from_single(date: NaiveDate) -> Self {
-        let start = local_datetime(date, 0, 0, 0);
-        let end = local_datetime(date, 23, 59, 59);
-        let label = format!("{}", date.format("%Y-%m-%d"));
-        Self { start, end, label }
-    }
-
     pub fn from_bounds(start_date: NaiveDate, end_date: NaiveDate) -> Self {
         let start = local_datetime(start_date, 0, 0, 0);
         let end = local_datetime(end_date, 23, 59, 59);
@@ -45,34 +38,6 @@ impl DateRange {
             )
         };
         Self { start, end, label }
-    }
-
-    pub fn from_options(
-        date: Option<NaiveDate>,
-        start_date: Option<NaiveDate>,
-        end_date: Option<NaiveDate>,
-    ) -> Result<Self, String> {
-        if let Some(date) = date {
-            return Ok(Self::from_single(date));
-        }
-
-        match (start_date, end_date) {
-            (Some(start), Some(end)) => {
-                if start > end {
-                    return Err("Start date cannot be after end date.".to_string());
-                }
-                Ok(Self::from_bounds(start, end))
-            }
-            (Some(start), None) => {
-                let end = Local::now().date_naive();
-                if start > end {
-                    return Err("Start date cannot be after end date.".to_string());
-                }
-                Ok(Self::from_bounds(start, end))
-            }
-            (None, None) => Ok(Self::today()),
-            (None, Some(_)) => Err("End date requires a start date.".to_string()),
-        }
     }
 
     pub fn as_rfc3339(&self) -> (String, String) {
@@ -98,7 +63,8 @@ pub fn parse_date(value: &str) -> Result<NaiveDate, String> {
 }
 
 fn local_datetime(date: NaiveDate, hour: u32, minute: u32, second: u32) -> DateTime<Local> {
-    let result = Local.with_ymd_and_hms(date.year(), date.month(), date.day(), hour, minute, second);
+    let result =
+        Local.with_ymd_and_hms(date.year(), date.month(), date.day(), hour, minute, second);
     result
         .earliest()
         .or_else(|| result.latest())

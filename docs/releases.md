@@ -20,6 +20,7 @@ Workflow file:
 - Creates a GitHub Release with tag `v<version>`.
 - Auto-generates release notes from merged PRs and commits.
 - Attaches packaged binaries to the release.
+- A separate workflow updates `CHANGELOG.md` from the release notes.
 
 ## Release Assets
 The workflow publishes:

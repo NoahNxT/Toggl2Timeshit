@@ -1,0 +1,130 @@
+name: 📝 Update Changelog
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to sync (e.g. v1.3.6). Leave empty to use latest."
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  changelog:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release tag
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            tag="${{ github.event.release.tag_name }}"
+          elif [[ -n "${{ github.event.inputs.tag }}" ]]; then
+            tag="${{ github.event.inputs.tag }}"
+          else
+            tag=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases/latest | python3 -c "import sys, json; print(json.load(sys.stdin)['tag_name'])")
+          fi
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch release notes
+        id: notes
+        shell: bash
+        env:
+          TAG: ${{ steps.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+          body=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases/tags/${TAG} | python3 - <<'PY'
+          import json,sys
+          data=json.load(sys.stdin)
+          print(data.get("body","").strip())
+          PY
+          )
+          date=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases/tags/${TAG} | python3 - <<'PY'
+          import json,sys
+          data=json.load(sys.stdin)
+          print((data.get("published_at","") or "")[:10])
+          PY
+          )
+          if [[ -z "${date}" ]]; then
+            date=$(date +%Y-%m-%d)
+          fi
+          echo "date=${date}" >> "$GITHUB_OUTPUT"
+          printf '%s' "$body" > /tmp/release-body.txt
+
+      - name: Update CHANGELOG.md
+        shell: bash
+        env:
+          TAG: ${{ steps.resolve.outputs.tag }}
+          DATE: ${{ steps.notes.outputs.date }}
+        run: |
+          set -euo pipefail
+          if [[ ! -f CHANGELOG.md ]]; then
+            echo "# Changelog" > CHANGELOG.md
+            echo "" >> CHANGELOG.md
+            echo "All notable changes to this project will be documented in this file." >> CHANGELOG.md
+            echo "This file is auto-updated from GitHub Release notes." >> CHANGELOG.md
+            echo "" >> CHANGELOG.md
+            echo "## Unreleased" >> CHANGELOG.md
+            echo "" >> CHANGELOG.md
+            echo "- Work in progress." >> CHANGELOG.md
+          fi
+          version="${TAG#v}"
+          header="## v${version} - ${DATE}"
+          if grep -q "^${header}$" CHANGELOG.md >/dev/null 2>&1; then
+            echo "Changelog already contains ${header}."
+            exit 0
+          fi
+          body=$(cat /tmp/release-body.txt)
+          if [[ -z "${body}" ]]; then
+            body="- Release ${TAG}."
+          fi
+          HEADER="${header}" BODY="${body}" python3 - <<'PY'
+          import os
+          header=os.environ["HEADER"]
+          body=os.environ["BODY"].rstrip()
+          with open("CHANGELOG.md","r",encoding="utf-8") as f:
+            lines=f.read().splitlines()
+          out=[]
+          inserted=False
+          i=0
+          while i < len(lines):
+            out.append(lines[i])
+            if lines[i].strip() == "## Unreleased" and not inserted:
+              out.append("")
+              out.append(header)
+              out.append("")
+              out.extend(body.splitlines() or ["- Release."])
+              out.append("")
+              inserted=True
+            i+=1
+          if not inserted:
+            out.append("")
+            out.append(header)
+            out.append("")
+            out.extend(body.splitlines() or ["- Release."])
+            out.append("")
+          with open("CHANGELOG.md","w",encoding="utf-8") as f:
+            f.write("\n".join(out).rstrip()+"\n")
+          PY
+
+      - name: Commit and push
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add CHANGELOG.md
+          if git diff --cached --quiet; then
+            echo "No changelog changes."
+            exit 0
+          fi
+          git commit -m "📝 update changelog for ${{ steps.resolve.outputs.tag }}"
+          git push origin main

@@ -7,10 +7,10 @@ mod enabled {
     use std::env;
     use std::fs::{self, File};
     use std::io;
-    use std::path::PathBuf;
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
+    use std::path::PathBuf;
     use std::time::Duration;
     use tar::Archive;
     use tempfile::Builder;
@@ -22,7 +22,6 @@ mod enabled {
     #[derive(Debug, Clone)]
     pub struct UpdateInfo {
         pub latest: Version,
-        pub tag: String,
         pub asset_name: String,
         pub url: String,
     }
@@ -98,26 +97,30 @@ mod enabled {
             .json()
             .map_err(|err| UpdateError::Parse(err.to_string()))?;
 
-        let tag = release.tag_name.trim().to_string();
-        let trimmed = tag.trim_start_matches('v');
-        let latest =
-            Version::parse(trimmed).map_err(|err| UpdateError::Parse(err.to_string()))?;
+        let trimmed = release.tag_name.trim().trim_start_matches('v');
+        let latest = Version::parse(trimmed).map_err(|err| UpdateError::Parse(err.to_string()))?;
         let current = current_version();
 
         if latest <= current {
             return Ok(None);
         }
 
-        let asset_name = expected_asset_name()?;
+        let candidates = expected_asset_candidates()?;
+        let candidate_set: std::collections::HashSet<String> =
+            candidates.iter().map(|name| name.to_lowercase()).collect();
         let asset = release
             .assets
             .into_iter()
-            .find(|asset| asset.name == asset_name)
-            .ok_or_else(|| UpdateError::Parse(format!("Release asset {asset_name} not found")))?;
+            .find(|asset| candidate_set.contains(&asset.name.to_lowercase()))
+            .ok_or_else(|| {
+                UpdateError::Parse(format!(
+                    "Release asset {} not found",
+                    candidates.join(" or ")
+                ))
+            })?;
 
         Ok(Some(UpdateInfo {
             latest,
-            tag,
             asset_name: asset.name,
             url: asset.browser_download_url,
         }))
@@ -146,8 +149,7 @@ mod enabled {
         let mut archive_file =
             File::create(&archive_path).map_err(|err| UpdateError::Io(err.to_string()))?;
         let mut reader = response;
-        io::copy(&mut reader, &mut archive_file)
-            .map_err(|err| UpdateError::Io(err.to_string()))?;
+        io::copy(&mut reader, &mut archive_file).map_err(|err| UpdateError::Io(err.to_string()))?;
 
         let archive_file =
             File::open(&archive_path).map_err(|err| UpdateError::Io(err.to_string()))?;
@@ -165,8 +167,8 @@ mod enabled {
                 .map_err(|err| UpdateError::Io(err.to_string()))?;
         }
 
-        let binary_name = expected_binary_name()?;
-        let extracted_path = find_extracted_binary(tempdir.path(), &binary_name)?;
+        let binary_candidates = expected_binary_candidates()?;
+        let extracted_path = find_extracted_binary(tempdir.path(), &binary_candidates)?;
         let _persisted_dir = tempdir.keep();
 
         Ok(extracted_path)
@@ -209,107 +211,63 @@ mod enabled {
             .map_err(|err| UpdateError::Network(err.to_string()))
     }
 
-    fn expected_asset_name() -> Result<String, UpdateError> {
-        let asset = match env::consts::OS {
-            "linux" => "timeshit-linux.tar.gz",
-            "macos" => "timeshit-macos.tar.gz",
-            "windows" => "timeshit-windows.zip",
-            other => {
-                return Err(UpdateError::Unsupported(format!(
-                    "Unsupported OS: {other}"
-                )))
-            }
+    fn expected_asset_candidates() -> Result<Vec<String>, UpdateError> {
+        let assets = match env::consts::OS {
+            "linux" => vec!["timeshit-linux.tar.gz", "timeshit-Linux.tar.gz"],
+            "macos" => vec!["timeshit-macos.tar.gz", "timeshit-macOS.tar.gz"],
+            "windows" => vec!["timeshit-windows.zip", "timeshit-Windows.zip"],
+            other => return Err(UpdateError::Unsupported(format!("Unsupported OS: {other}"))),
         };
-        Ok(asset.to_string())
+        Ok(assets.into_iter().map(|value| value.to_string()).collect())
     }
 
-    fn expected_binary_name() -> Result<String, UpdateError> {
-        let binary = match env::consts::OS {
-            "linux" => "timeshit",
-            "macos" => "timeshit",
-            "windows" => "timeshit.exe",
-            other => {
-                return Err(UpdateError::Unsupported(format!(
-                    "Unsupported OS: {other}"
-                )))
-            }
+    fn expected_binary_candidates() -> Result<Vec<String>, UpdateError> {
+        let binaries = match env::consts::OS {
+            "linux" => vec!["timeshit", "timeshit-Linux"],
+            "macos" => vec!["timeshit", "timeshit-macOS"],
+            "windows" => vec!["timeshit.exe"],
+            other => return Err(UpdateError::Unsupported(format!("Unsupported OS: {other}"))),
         };
-        Ok(binary.to_string())
+        Ok(binaries.into_iter().map(|value| value.to_string()).collect())
     }
 
-    fn find_extracted_binary(dir: &Path, expected: &str) -> Result<PathBuf, UpdateError> {
-        let direct = dir.join(expected);
-        if direct.exists() {
-            return Ok(direct);
+    fn find_extracted_binary(dir: &Path, expected: &[String]) -> Result<PathBuf, UpdateError> {
+        for name in expected {
+            let direct = dir.join(name);
+            if direct.exists() {
+                return Ok(direct);
+            }
         }
 
         let entries = fs::read_dir(dir).map_err(|err| UpdateError::Io(err.to_string()))?;
         for entry in entries.flatten() {
             let path = entry.path();
-            if path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name == expected)
-            {
-                return Ok(path);
+            if let Some(name) = path.file_name().and_then(|value| value.to_str()) {
+                if expected.iter().any(|candidate| candidate == name) {
+                    return Ok(path);
+                }
             }
         }
 
         Err(UpdateError::Parse(format!(
-            "Extracted binary {expected} not found"
+            "Extracted binary {} not found",
+            expected.join(" or ")
         )))
-    }
-
-    fn is_managed_install() -> bool {
-        let exe = match std::env::current_exe() {
-            Ok(path) => path,
-            Err(_) => return false,
-        };
-        let canonical = fs::canonicalize(&exe).unwrap_or(exe);
-        let path_str = canonical.to_string_lossy().to_lowercase();
-
-        if path_str.contains("/cellar/") || path_str.contains("\\cellar\\") {
-            return true;
-        }
-
-        if path_str.contains("\\chocolatey\\lib\\")
-            || path_str.contains("\\chocolatey\\bin\\")
-            || path_str.contains("\\scoop\\apps\\")
-            || path_str.contains("\\windowsapps\\")
-        {
-            return true;
-        }
-
-        if cfg!(target_os = "linux") {
-            if Path::new("/var/lib/dpkg/info/timeshit.list").exists()
-                || Path::new("/usr/share/doc/timeshit").exists()
-            {
-                return true;
-            }
-        }
-
-        false
     }
 
     #[cfg(unix)]
     fn install_update_unix(staged_path: &Path, current_exe: &Path) -> Result<(), UpdateError> {
         fs::copy(staged_path, current_exe).map_err(|err| UpdateError::Io(err.to_string()))?;
-        fs::set_permissions(
-            current_exe,
-            fs::Permissions::from_mode(0o755),
-        )
-        .map_err(|err| UpdateError::Io(err.to_string()))?;
+        fs::set_permissions(current_exe, fs::Permissions::from_mode(0o755))
+            .map_err(|err| UpdateError::Io(err.to_string()))?;
         Ok(())
     }
 
     #[cfg(windows)]
     fn install_update_windows(staged_path: &Path, current_exe: &Path) -> Result<(), UpdateError> {
-        let temp_path = current_exe
-            .with_extension("exe.new");
-        fs::copy(staged_path, &temp_path)
-            .map_err(|err| UpdateError::Io(err.to_string()))?;
-        fs::rename(temp_path, current_exe)
-            .map_err(|err| UpdateError::Io(err.to_string()))?;
+        let temp_path = current_exe.with_extension("exe.new");
+        fs::copy(staged_path, &temp_path).map_err(|err| UpdateError::Io(err.to_string()))?;
+        fs::rename(temp_path, current_exe).map_err(|err| UpdateError::Io(err.to_string()))?;
         Ok(())
     }
 }
@@ -332,7 +290,6 @@ mod disabled {
     #[derive(Debug, Clone)]
     pub struct UpdateInfo {
         pub latest: Version,
-        pub tag: String,
         pub asset_name: String,
         pub url: String,
     }

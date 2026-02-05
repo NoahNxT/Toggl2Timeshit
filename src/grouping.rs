@@ -27,10 +27,11 @@ pub fn group_entries(
 ) -> Vec<GroupedProject> {
     let mut project_info: HashMap<Option<u64>, (String, Option<String>)> = HashMap::new();
     for project in projects {
-        let client_name = project
-            .client_name
-            .clone()
-            .or_else(|| project.client_id.and_then(|id| client_names.get(&id).cloned()));
+        let client_name = project.client_name.clone().or_else(|| {
+            project
+                .client_id
+                .and_then(|id| client_names.get(&id).cloned())
+        });
         project_info.insert(Some(project.id), (project.name.clone(), client_name));
     }
     project_info.insert(None, ("No Project".to_string(), None));
@@ -103,8 +104,8 @@ pub fn group_entries(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
     use crate::rounding::{RoundingConfig, RoundingMode};
+    use std::collections::HashMap;
 
     #[test]
     fn groups_entries_by_project_and_description() {
@@ -197,8 +198,16 @@ mod tests {
         assert_eq!(grouped.len(), 1);
         let project_a = &grouped[0];
 
-        let ticket1 = project_a.entries.iter().find(|e| e.description == "Ticket 1").unwrap();
-        let ticket2 = project_a.entries.iter().find(|e| e.description == "Ticket 2").unwrap();
+        let ticket1 = project_a
+            .entries
+            .iter()
+            .find(|e| e.description == "Ticket 1")
+            .unwrap();
+        let ticket2 = project_a
+            .entries
+            .iter()
+            .find(|e| e.description == "Ticket 2")
+            .unwrap();
         assert!((ticket1.total_hours - 0.25).abs() < 0.001);
         assert!((ticket2.total_hours - 0.25).abs() < 0.001);
         assert!((project_a.total_hours - 0.5).abs() < 0.001);

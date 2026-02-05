@@ -56,11 +56,14 @@ pub fn read_token() -> Option<String> {
     }
 
     let path = token_path()?;
-    fs::read_to_string(path).ok().map(|value| value.trim().to_string())
+    fs::read_to_string(path)
+        .ok()
+        .map(|value| value.trim().to_string())
 }
 
 pub fn write_token(token: &str) -> Result<(), io::Error> {
-    let path = token_path().ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Home directory not found"))?;
+    let path = token_path()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Home directory not found"))?;
     fs::write(path, token)
 }
 
@@ -121,7 +124,8 @@ fn read_config() -> Option<Config> {
 }
 
 fn write_config(config: &Config) -> Result<(), io::Error> {
-    let path = config_path().ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Home directory not found"))?;
+    let path = config_path()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Home directory not found"))?;
     let json = serde_json::to_string_pretty(config)
         .map_err(|err| io::Error::new(io::ErrorKind::Other, err.to_string()))?;
     fs::write(path, json)
@@ -138,7 +142,8 @@ pub fn read_cache() -> Option<CacheFile> {
 }
 
 pub fn write_cache(cache: &CacheFile) -> Result<(), io::Error> {
-    let path = cache_path().ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Home directory not found"))?;
+    let path = cache_path()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Home directory not found"))?;
     let json = serde_json::to_string_pretty(cache)
         .map_err(|err| io::Error::new(io::ErrorKind::Other, err.to_string()))?;
     fs::write(path, json)
@@ -174,7 +179,8 @@ pub fn read_quota() -> QuotaFile {
 }
 
 pub fn write_quota(quota: &QuotaFile) -> Result<(), io::Error> {
-    let path = quota_path().ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Home directory not found"))?;
+    let path = quota_path()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Home directory not found"))?;
     let json = serde_json::to_string_pretty(quota)
         .map_err(|err| io::Error::new(io::ErrorKind::Other, err.to_string()))?;
     fs::write(path, json)

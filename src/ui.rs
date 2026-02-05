@@ -1,11 +1,11 @@
 use chrono::{Datelike, Duration, NaiveDate};
+use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Margin, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Block, BorderType, Borders, Cell, Clear, List, ListItem, Paragraph, Row, Table, Wrap,
 };
-use ratatui::Frame;
 use std::collections::HashMap;
 
 use crate::app::{
@@ -38,7 +38,6 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         Mode::WorkspaceSelect => draw_workspace_select(frame, app, size, &theme),
         Mode::DateInput(mode) => draw_date_input(frame, app, size, mode, &theme),
         Mode::Settings => draw_settings(frame, app, size, &theme),
-        Mode::UpdatePrompt => draw_update_prompt(frame, app, size, &theme),
         Mode::Dashboard | Mode::Rollups => {}
     }
 
@@ -53,48 +52,6 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
 }
 
-fn draw_update_prompt(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
-    let block = centered_rect(70, 35, area);
-    frame.render_widget(Clear, block);
-
-    let current = update::current_version();
-    let (latest, tag) = app
-        .update_info
-        .as_ref()
-        .map(|info| (format!("v{}", info.latest), info.tag.clone()))
-        .unwrap_or_else(|| ("unknown".to_string(), "unknown".to_string()));
-
-    let mut lines = vec![
-        Line::from(Span::styled(
-            "Update Available",
-            Style::default()
-                .add_modifier(Modifier::BOLD)
-                .fg(theme.accent),
-        )),
-        Line::from(""),
-        Line::from(format!("Current version: v{}", current)),
-        Line::from(format!("Latest version:  {}", latest)),
-        Line::from(format!("Release tag:     {}", tag)),
-        Line::from(""),
-        Line::from("Update available."),
-        Line::from("Press u to update now, Esc to dismiss."),
-    ];
-
-    if let Some(error) = app.update_error.as_ref() {
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            error,
-            Style::default().fg(Color::Red),
-        )));
-    }
-
-    let paragraph = Paragraph::new(lines)
-        .alignment(Alignment::Left)
-        .block(panel_block("Update Required", theme))
-        .wrap(Wrap { trim: true });
-    frame.render_widget(paragraph, block);
-}
-
 fn draw_dashboard(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
     let content = area.inner(Margin {
         vertical: 1,
@@ -103,18 +60,20 @@ fn draw_dashboard(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(2)])
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(0),
+            Constraint::Length(2),
+        ])
         .split(content);
 
     let header = header_line(app, theme);
-    let header_block = Paragraph::new(header)
-        .alignment(Alignment::Left)
-        .block(
-            Block::default()
-                .borders(Borders::BOTTOM)
-                .border_style(theme.border_style())
-                .style(theme.panel_style()),
-        );
+    let header_block = Paragraph::new(header).alignment(Alignment::Left).block(
+        Block::default()
+            .borders(Borders::BOTTOM)
+            .border_style(theme.border_style())
+            .style(theme.panel_style()),
+    );
     frame.render_widget(header_block, chunks[0]);
 
     let body = Layout::default()
@@ -127,11 +86,11 @@ fn draw_dashboard(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
         .iter()
         .map(|group| {
             let line = Line::from(vec![
-                Span::styled(&group.display_name, Style::default().add_modifier(Modifier::BOLD)),
                 Span::styled(
-                    format!("  {:.2}h", group.total_hours),
-                    theme.muted_style(),
+                    &group.display_name,
+                    Style::default().add_modifier(Modifier::BOLD),
                 ),
+                Span::styled(format!("  {:.2}h", group.total_hours), theme.muted_style()),
             ]);
             ListItem::new(line).style(theme.panel_style())
         })
@@ -173,10 +132,7 @@ fn draw_dashboard(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
             .map(|entry| {
                 ListItem::new(Line::from(vec![
                     Span::raw(&entry.description),
-                    Span::styled(
-                        format!("  {:.2}h", entry.total_hours),
-                        theme.muted_style(),
-                    ),
+                    Span::styled(format!("  {:.2}h", entry.total_hours), theme.muted_style()),
                 ]))
                 .style(theme.panel_style())
             })
@@ -193,14 +149,12 @@ fn draw_dashboard(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
     frame.render_stateful_widget(entries_list, body[1], &mut app.entry_state);
 
     let footer = footer_line(app, theme);
-    let footer_block = Paragraph::new(footer)
-        .alignment(Alignment::Left)
-        .block(
-            Block::default()
-                .borders(Borders::TOP)
-                .border_style(theme.border_style())
-                .style(theme.panel_style()),
-        );
+    let footer_block = Paragraph::new(footer).alignment(Alignment::Left).block(
+        Block::default()
+            .borders(Borders::TOP)
+            .border_style(theme.border_style())
+            .style(theme.panel_style()),
+    );
     frame.render_widget(footer_block, chunks[2]);
 }
 
@@ -212,18 +166,20 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(2)])
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(0),
+            Constraint::Length(2),
+        ])
         .split(content);
 
     let header = rollups_header_line(app, theme);
-    let header_block = Paragraph::new(header)
-        .alignment(Alignment::Left)
-        .block(
-            Block::default()
-                .borders(Borders::BOTTOM)
-                .border_style(theme.border_style())
-                .style(theme.panel_style()),
-        );
+    let header_block = Paragraph::new(header).alignment(Alignment::Left).block(
+        Block::default()
+            .borders(Borders::BOTTOM)
+            .border_style(theme.border_style())
+            .style(theme.panel_style()),
+    );
     frame.render_widget(header_block, chunks[0]);
 
     let body = Layout::default()
@@ -281,16 +237,12 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
         .highlight_symbol(period_highlight_symbol);
 
     match app.rollup_view {
-        RollupView::Weekly => frame.render_stateful_widget(
-            period_list,
-            body[0],
-            &mut app.rollup_week_state,
-        ),
-        RollupView::Monthly => frame.render_stateful_widget(
-            period_list,
-            body[0],
-            &mut app.rollup_month_state,
-        ),
+        RollupView::Weekly => {
+            frame.render_stateful_widget(period_list, body[0], &mut app.rollup_week_state)
+        }
+        RollupView::Monthly => {
+            frame.render_stateful_widget(period_list, body[0], &mut app.rollup_month_state)
+        }
     };
 
     let right_sections = Layout::default()
@@ -373,14 +325,12 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
     frame.render_widget(calendar, right_sections[1]);
 
     let footer = rollups_footer_line(app, theme);
-    let footer_block = Paragraph::new(footer)
-        .alignment(Alignment::Left)
-        .block(
-            Block::default()
-                .borders(Borders::TOP)
-                .border_style(theme.border_style())
-                .style(theme.panel_style()),
-        );
+    let footer_block = Paragraph::new(footer).alignment(Alignment::Left).block(
+        Block::default()
+            .borders(Borders::TOP)
+            .border_style(theme.border_style())
+            .style(theme.panel_style()),
+    );
     frame.render_widget(footer_block, chunks[2]);
 }
 
@@ -467,9 +417,13 @@ fn header_line(app: &App, theme: &Theme) -> Line<'static> {
 
 fn footer_line(app: &mut App, theme: &Theme) -> Line<'static> {
     let total_style = if app.total_hours < app.target_hours {
-        Style::default().fg(theme.error).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(theme.error)
+            .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(theme.success).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(theme.success)
+            .add_modifier(Modifier::BOLD)
     };
 
     let status = app.visible_status().unwrap_or_default();
@@ -518,7 +472,10 @@ fn draw_login(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
 
     if let Some(status) = &app.status {
         lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(status, Style::default().fg(Color::Red))));
+        lines.push(Line::from(Span::styled(
+            status,
+            Style::default().fg(Color::Red),
+        )));
     }
 
     let paragraph = Paragraph::new(lines)
@@ -560,14 +517,20 @@ fn draw_date_input(frame: &mut Frame, app: &App, area: Rect, mode: DateInputMode
     };
 
     let start_value = if app.is_date_start_active() {
-        Span::styled(app.date_start_input_value(), Style::default().fg(theme.accent))
+        Span::styled(
+            app.date_start_input_value(),
+            Style::default().fg(theme.accent),
+        )
     } else {
         Span::raw(app.date_start_input_value())
     };
     let end_value = if app.is_date_start_active() {
         Span::raw(app.date_end_input_value())
     } else {
-        Span::styled(app.date_end_input_value(), Style::default().fg(theme.accent))
+        Span::styled(
+            app.date_end_input_value(),
+            Style::default().fg(theme.accent),
+        )
     };
 
     let mut lines = vec![
@@ -587,7 +550,10 @@ fn draw_date_input(frame: &mut Frame, app: &App, area: Rect, mode: DateInputMode
 
     if let Some(status) = &app.status {
         lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(status, Style::default().fg(Color::Red))));
+        lines.push(Line::from(Span::styled(
+            status,
+            Style::default().fg(Color::Red),
+        )));
     }
 
     let paragraph = Paragraph::new(lines)
@@ -626,9 +592,13 @@ fn draw_toast(frame: &mut Frame, area: Rect, message: &str, is_error: bool, them
 
     frame.render_widget(Clear, rect);
     let style = if is_error {
-        Style::default().fg(theme.error).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(theme.error)
+            .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(theme.success).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(theme.success)
+            .add_modifier(Modifier::BOLD)
     };
     let paragraph = Paragraph::new(Line::from(Span::styled(message, style)))
         .alignment(Alignment::Center)
@@ -641,11 +611,7 @@ fn hours_from_seconds(seconds: i64) -> f64 {
 }
 
 fn normalize_delta(value: f64) -> f64 {
-    if value.abs() < 0.005 {
-        0.0
-    } else {
-        value
-    }
+    if value.abs() < 0.005 { 0.0 } else { value }
 }
 
 fn delta_style(value: f64, theme: &Theme) -> Style {
@@ -750,7 +716,9 @@ fn calendar_week_line(
                             .fg(theme.accent_contrast())
                             .add_modifier(Modifier::BOLD)
                     } else {
-                        Style::default().fg(theme.highlight).add_modifier(Modifier::BOLD)
+                        Style::default()
+                            .fg(theme.highlight)
+                            .add_modifier(Modifier::BOLD)
                     };
                     Span::styled(label, highlight)
                 } else {
@@ -771,7 +739,9 @@ fn draw_help(frame: &mut Frame, area: Rect, theme: &Theme) {
     let block = centered_rect(70, 70, area);
     frame.render_widget(Clear, block);
 
-    let header_style = Style::default().add_modifier(Modifier::BOLD).fg(theme.accent);
+    let header_style = Style::default()
+        .add_modifier(Modifier::BOLD)
+        .fg(theme.accent);
     let key_style = Style::default().fg(theme.highlight);
 
     let rows = vec![
@@ -930,7 +900,9 @@ fn draw_settings(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
         .bg(theme.accent)
         .fg(theme.accent_contrast())
         .add_modifier(Modifier::BOLD);
-    let inactive_highlight = Style::default().fg(theme.highlight).add_modifier(Modifier::BOLD);
+    let inactive_highlight = Style::default()
+        .fg(theme.highlight)
+        .add_modifier(Modifier::BOLD);
 
     let (category_highlight, category_symbol) = match app.settings_focus() {
         SettingsFocus::Categories => (active_highlight, "▍ "),
@@ -1017,7 +989,9 @@ fn draw_settings(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
             };
 
             let value_style = if is_editing && editing_item == Some(item) {
-                Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD)
             } else if disabled {
                 theme.muted_style()
             } else {
@@ -1025,7 +999,10 @@ fn draw_settings(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
             };
 
             ListItem::new(Line::from(vec![
-                Span::styled(format!("{label}: "), Style::default().add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    format!("{label}: "),
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
                 Span::styled(value, value_style),
             ]))
             .style(theme.panel_style())
@@ -1043,7 +1020,9 @@ fn draw_settings(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
         SettingsFocus::Categories => "Enter items • Esc close",
         SettingsFocus::Items => "Up/Down select • Enter edit • Esc categories",
         SettingsFocus::Edit => match editing_item {
-            Some(SettingsItem::TargetHours) | Some(SettingsItem::TogglToken) => "Enter save • Esc cancel",
+            Some(SettingsItem::TargetHours) | Some(SettingsItem::TogglToken) => {
+                "Enter save • Esc cancel"
+            }
             Some(SettingsItem::Theme) => "Up/Down change • Enter save • Esc cancel",
             Some(SettingsItem::TimeRoundingToggle)
             | Some(SettingsItem::RoundingIncrement)
@@ -1055,7 +1034,11 @@ fn draw_settings(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
     let mut hint_lines = vec![Line::from(hint_text)];
     if let Some(status) = app.visible_status() {
         let is_success = is_success_status(&status);
-        let color = if is_success { theme.success } else { theme.error };
+        let color = if is_success {
+            theme.success
+        } else {
+            theme.error
+        };
         hint_lines.push(Line::from(""));
         hint_lines.push(Line::from(Span::styled(status, Style::default().fg(color))));
     }
@@ -1129,7 +1112,9 @@ impl Theme {
     }
 
     fn title_style(&self) -> Style {
-        Style::default().fg(self.accent).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(self.accent)
+            .add_modifier(Modifier::BOLD)
     }
 
     fn muted_style(&self) -> Style {
