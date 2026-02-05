@@ -39,20 +39,15 @@ jobs:
 
       - name: Submit initial manifest
         shell: pwsh
-        env:
-          PACKAGE_ID: ${{ vars.WINGET_PACKAGE_ID }}
         run: |
           $tag = $env:RELEASE_TAG
-          $version = $tag.TrimStart("v")
           $url = "https://github.com/${{ github.repository }}/releases/download/$tag/timeshit-windows.zip"
 
           $args = @(
             "new",
-            "--submit",
+            "--out", "winget-manifest",
             "--token", "${{ secrets.WINGET_TOKEN }}",
-            "--urls", $url,
-            "--version", $version,
-            "--id", $env:PACKAGE_ID
+            $url
           )
 
           & .\wingetcreate.exe @args
