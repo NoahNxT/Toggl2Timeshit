@@ -65,8 +65,8 @@ jobs:
             git remote add origin "https://x-access-token:${PACKAGES_TOKEN}@github.com/NoahNxT/homebrew-nxt-solutions-packages.git"
           else
             git clone "https://x-access-token:${PACKAGES_TOKEN}@github.com/NoahNxT/homebrew-nxt-solutions-packages.git" \
-              --branch "${default_branch}" --depth 1
-            cd nxt-solutions-packages
+              --branch "${default_branch}" --depth 1 homebrew-nxt-solutions-packages
+            cd homebrew-nxt-solutions-packages
           fi
 
       - name: Download release assets
@@ -76,7 +76,7 @@ jobs:
           gh release download "$RELEASE_TAG" -R "${{ github.repository }}" -p "timeshit-*.tar.gz" -D /tmp/releases
 
       - name: Generate Homebrew formula
-        working-directory: nxt-solutions-packages
+        working-directory: homebrew-nxt-solutions-packages
         run: |
           tag="${RELEASE_TAG}"
           version="${tag#v}"
@@ -117,7 +117,7 @@ jobs:
             > Formula/timeshit.rb
 
       - name: Commit and push
-        working-directory: nxt-solutions-packages
+        working-directory: homebrew-nxt-solutions-packages
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
