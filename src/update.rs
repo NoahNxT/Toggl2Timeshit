@@ -22,7 +22,6 @@ mod enabled {
     #[derive(Debug, Clone)]
     pub struct UpdateInfo {
         pub latest: Version,
-        pub tag: String,
         pub asset_name: String,
         pub url: String,
     }
@@ -98,8 +97,7 @@ mod enabled {
             .json()
             .map_err(|err| UpdateError::Parse(err.to_string()))?;
 
-        let tag = release.tag_name.trim().to_string();
-        let trimmed = tag.trim_start_matches('v');
+        let trimmed = release.tag_name.trim().trim_start_matches('v');
         let latest = Version::parse(trimmed).map_err(|err| UpdateError::Parse(err.to_string()))?;
         let current = current_version();
 
@@ -116,7 +114,6 @@ mod enabled {
 
         Ok(Some(UpdateInfo {
             latest,
-            tag,
             asset_name: asset.name,
             url: asset.browser_download_url,
         }))
@@ -285,7 +282,6 @@ mod disabled {
     #[derive(Debug, Clone)]
     pub struct UpdateInfo {
         pub latest: Version,
-        pub tag: String,
         pub asset_name: String,
         pub url: String,
     }
