@@ -65,8 +65,9 @@ jobs:
           git checkout "$RELEASE_TAG"
 
       - name: Align Cargo version to release tag
-        shell: python3
+        shell: bash
         run: |
+          python3 - <<'PY'
           import os, re
           tag = os.environ["RELEASE_TAG"]
           version = tag.lstrip("v")
@@ -75,6 +76,7 @@ jobs:
           data = re.sub(r'(?m)^version = ".*"$', f'version = "{version}"', data, count=1)
           with open("Cargo.toml", "w", encoding="utf-8") as f:
               f.write(data)
+          PY
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
