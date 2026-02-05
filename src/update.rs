@@ -79,6 +79,10 @@ mod enabled {
         true
     }
 
+    pub fn can_self_update() -> bool {
+        !is_managed_install()
+    }
+
     pub fn check_for_update() -> Result<Option<UpdateInfo>, UpdateError> {
         let client = build_client()?;
         let response = client
@@ -231,6 +235,37 @@ mod enabled {
         Ok(binaries.into_iter().map(|value| value.to_string()).collect())
     }
 
+    fn is_managed_install() -> bool {
+        let exe = match std::env::current_exe() {
+            Ok(path) => path,
+            Err(_) => return false,
+        };
+        let canonical = fs::canonicalize(&exe).unwrap_or(exe);
+        let path_str = canonical.to_string_lossy().to_lowercase();
+
+        if path_str.contains("/cellar/") || path_str.contains("\\cellar\\") {
+            return true;
+        }
+
+        if path_str.contains("\\chocolatey\\lib\\")
+            || path_str.contains("\\chocolatey\\bin\\")
+            || path_str.contains("\\scoop\\apps\\")
+            || path_str.contains("\\windowsapps\\")
+        {
+            return true;
+        }
+
+        if cfg!(target_os = "linux") {
+            if Path::new("/var/lib/dpkg/info/timeshit.list").exists()
+                || Path::new("/usr/share/doc/timeshit").exists()
+            {
+                return true;
+            }
+        }
+
+        false
+    }
+
     fn find_extracted_binary(dir: &Path, expected: &[String]) -> Result<PathBuf, UpdateError> {
         for name in expected {
             let direct = dir.join(name);
@@ -314,6 +349,10 @@ mod disabled {
     }
 
     pub fn should_check_updates() -> bool {
+        false
+    }
+
+    pub fn can_self_update() -> bool {
         false
     }
 

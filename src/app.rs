@@ -119,6 +119,7 @@ pub struct App {
     pub target_hours: f64,
     pub update_info: Option<UpdateInfo>,
     pub update_error: Option<String>,
+    pub update_installable: bool,
     pub rounding: Option<RoundingConfig>,
     token_hash: Option<String>,
     cache: Option<CacheFile>,
@@ -208,6 +209,7 @@ impl App {
             target_hours,
             update_info: None,
             update_error: None,
+            update_installable: false,
             rounding,
             token_hash,
             cache,
@@ -281,12 +283,20 @@ impl App {
 
         match update::check_for_update() {
             Ok(Some(info)) => {
-                let message = format!("Update available: v{} (press u to update)", info.latest);
+                self.update_installable = update::can_self_update();
+                let message = if self.update_installable {
+                    format!("Update available: v{} (press u to update)", info.latest)
+                } else {
+                    format!("Update available: v{} (update via package manager)", info.latest)
+                };
                 self.update_info = Some(info);
                 self.status = Some(message.clone());
                 self.set_toast(message, false);
             }
-            Ok(None) => {}
+            Ok(None) => {
+                self.update_info = None;
+                self.update_installable = false;
+            }
             Err(err) => {
                 let message = format!("Update check failed: {err}");
                 self.status = Some(message.clone());
@@ -581,8 +591,10 @@ impl App {
             KeyCode::Char('o') | KeyCode::Char('O') => self.enter_rollups(),
             KeyCode::Char('d') => self.enter_date_input(DateInputMode::Range),
             KeyCode::Char('u') | KeyCode::Char('U') => {
-                if self.update_info.is_some() {
+                if self.update_info.is_some() && self.update_installable {
                     self.start_update();
+                } else if self.update_info.is_some() {
+                    self.set_toast("Update via package manager.", false);
                 } else if update::should_check_updates() {
                     self.set_toast("No update available.", false);
                 } else {

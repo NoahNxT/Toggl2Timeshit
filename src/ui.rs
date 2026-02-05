@@ -48,7 +48,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
 
     if app.show_help {
-        draw_help(frame, size, &theme);
+        draw_help(frame, app, size, &theme);
     }
 }
 
@@ -735,7 +735,7 @@ fn calendar_week_line(
     Line::from(spans)
 }
 
-fn draw_help(frame: &mut Frame, area: Rect, theme: &Theme) {
+fn draw_help(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
     let block = centered_rect(70, 70, area);
     frame.render_widget(Clear, block);
 
@@ -744,7 +744,7 @@ fn draw_help(frame: &mut Frame, area: Rect, theme: &Theme) {
         .fg(theme.accent);
     let key_style = Style::default().fg(theme.highlight);
 
-    let rows = vec![
+    let mut rows = vec![
         Row::new(vec![
             Cell::from(Span::styled("Navigation", header_style)),
             Cell::from(""),
@@ -859,10 +859,6 @@ fn draw_help(frame: &mut Frame, area: Rect, theme: &Theme) {
             Cell::from("Refresh"),
         ]),
         Row::new(vec![
-            Cell::from(Span::styled("u", key_style)),
-            Cell::from("Install update (when available)"),
-        ]),
-        Row::new(vec![
             Cell::from(Span::styled("s", key_style)),
             Cell::from("Settings"),
         ]),
@@ -879,6 +875,16 @@ fn draw_help(frame: &mut Frame, area: Rect, theme: &Theme) {
             Cell::from("Quit"),
         ]),
     ];
+
+    if app.update_installable {
+        rows.insert(
+            rows.len() - 3,
+            Row::new(vec![
+                Cell::from(Span::styled("u", key_style)),
+                Cell::from("Install update (when available)"),
+            ]),
+        );
+    }
 
     let table = Table::new(rows, [Constraint::Length(20), Constraint::Min(10)])
         .block(panel_block("Help", theme))
