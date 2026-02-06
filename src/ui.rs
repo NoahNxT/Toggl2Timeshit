@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use crate::app::{
     App, DashboardFocus, DateInputMode, Mode, RollupFocus, RollupView, SettingsFocus, SettingsItem,
 };
+use crate::rollups::WeekStart;
 use crate::rollups::{DailyTotal, PeriodRollup};
 use crate::storage::ThemePreference;
 use crate::update;
@@ -317,6 +318,7 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
             app.rollup_focus,
             app.target_hours,
             app.rollups_include_weekends,
+            app.rollups_week_start,
             theme,
         )
     } else {
@@ -354,6 +356,10 @@ fn rollups_header_line(app: &App, theme: &Theme) -> Line<'static> {
     } else {
         "Off"
     };
+    let week_start = match app.rollups_week_start {
+        WeekStart::Monday => "Mon",
+        WeekStart::Sunday => "Sun",
+    };
     Line::from(vec![
         Span::styled("Rollups", theme.title_style()),
         Span::raw("  "),
@@ -369,6 +375,10 @@ fn rollups_header_line(app: &App, theme: &Theme) -> Line<'static> {
         Span::raw(": "),
         Span::styled(weekends, Style::default().add_modifier(Modifier::BOLD)),
         Span::raw("  "),
+        Span::styled("Week start", theme.muted_style()),
+        Span::raw(": "),
+        Span::styled(week_start, Style::default().add_modifier(Modifier::BOLD)),
+        Span::raw("  "),
         Span::styled("Date", theme.muted_style()),
         Span::raw(": "),
         Span::raw(app.date_range.label().to_string()),
@@ -380,7 +390,9 @@ fn rollups_footer_line(app: &mut App, theme: &Theme) -> Line<'static> {
     Line::from(vec![
         Span::styled("Tab focus", theme.muted_style()),
         Span::raw(" · "),
-        Span::styled("Up/Down move", theme.muted_style()),
+        Span::styled("←/→ move", theme.muted_style()),
+        Span::raw(" · "),
+        Span::styled("↑/↓ move", theme.muted_style()),
         Span::raw(" · "),
         Span::styled("w weekly", theme.muted_style()),
         Span::raw(" · "),
@@ -674,6 +686,7 @@ fn build_calendar_lines(
     focus: RollupFocus,
     target_hours: f64,
     include_weekends: bool,
+    week_start: WeekStart,
     theme: &Theme,
 ) -> Vec<Line<'static>> {
     let mut map: HashMap<NaiveDate, i64> = HashMap::new();
@@ -684,7 +697,10 @@ fn build_calendar_lines(
     let cell_width = 10;
     let mut lines = Vec::new();
     let header_labels: Vec<&str> = if include_weekends {
-        vec!["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        match week_start {
+            WeekStart::Monday => vec!["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+            WeekStart::Sunday => vec!["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
+        }
     } else {
         vec!["Mon", "Tue", "Wed", "Thu", "Fri"]
     };
@@ -702,9 +718,15 @@ fn build_calendar_lines(
     let mut week_cells: Vec<Option<NaiveDate>> = Vec::new();
     let mut current = period.start;
     let offset = if include_weekends {
-        current.weekday().num_days_from_monday() as usize
+        match week_start {
+            WeekStart::Monday => current.weekday().num_days_from_monday() as usize,
+            WeekStart::Sunday => current.weekday().num_days_from_sunday() as usize,
+        }
     } else {
-        current.weekday().num_days_from_monday().min(5) as usize
+        match current.weekday().number_from_monday() {
+            6 | 7 => 0,
+            weekday => (weekday - 1) as usize,
+        }
     };
     for _ in 0..offset {
         week_cells.push(None);
@@ -773,17 +795,20 @@ fn calendar_week_line(
                 let label = format!("{:02} | {:>4.1}h", date.day(), hours);
                 let padded_label = format!("{:<width$}", label, width = cell_width);
                 if Some(*date) == selected_date {
-                    let highlight = if matches!(focus, RollupFocus::Days) {
-                        Style::default()
-                            .bg(theme.accent)
-                            .fg(theme.accent_contrast())
-                            .add_modifier(Modifier::BOLD)
+                    if matches!(focus, RollupFocus::Days) {
+                        Span::styled(
+                            padded_label,
+                            Style::default()
+                                .bg(theme.accent)
+                                .fg(theme.text)
+                                .add_modifier(Modifier::BOLD),
+                        )
                     } else {
-                        Style::default()
-                            .fg(theme.highlight)
-                            .add_modifier(Modifier::BOLD)
-                    };
-                    Span::styled(padded_label, highlight)
+                        Span::styled(
+                            padded_label,
+                            delta_style(delta, theme).add_modifier(Modifier::BOLD),
+                        )
+                    }
                 } else {
                     Span::styled(
                         padded_label,
@@ -891,8 +916,12 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
             Cell::from("Toggle weekends in rollups"),
         ]),
         Row::new(vec![
+            Cell::from(Span::styled("Left/Right", key_style)),
+            Cell::from("Move period/day (1 step)"),
+        ]),
+        Row::new(vec![
             Cell::from(Span::styled("Up/Down", key_style)),
-            Cell::from("Move selection"),
+            Cell::from("Move period; in month-day view jump week"),
         ]),
         Row::new(vec![
             Cell::from(Span::styled("Tab", key_style)),
@@ -1031,6 +1060,25 @@ fn draw_settings(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
                     };
                     ("Target hours", value, false)
                 }
+                SettingsItem::RollupsIncludeWeekends => {
+                    let enabled = app.settings_rollups_include_weekends_display();
+                    (
+                        "Include weekends",
+                        if enabled {
+                            "On".to_string()
+                        } else {
+                            "Off".to_string()
+                        },
+                        false,
+                    )
+                }
+                SettingsItem::RollupsWeekStart => {
+                    let value = match app.settings_rollups_week_start_display() {
+                        WeekStart::Monday => "Monday",
+                        WeekStart::Sunday => "Sunday",
+                    };
+                    ("Week start", value.to_string(), false)
+                }
                 SettingsItem::TimeRoundingToggle => {
                     let value = if rounding_enabled { "On" } else { "Off" }.to_string();
                     ("Time rounding", value, false)
@@ -1099,7 +1147,9 @@ fn draw_settings(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
             Some(SettingsItem::TargetHours) | Some(SettingsItem::TogglToken) => {
                 "Enter save • Esc cancel"
             }
-            Some(SettingsItem::Theme) => "Up/Down change • Enter save • Esc cancel",
+            Some(SettingsItem::Theme)
+            | Some(SettingsItem::RollupsIncludeWeekends)
+            | Some(SettingsItem::RollupsWeekStart) => "Up/Down change • Enter save • Esc cancel",
             Some(SettingsItem::TimeRoundingToggle)
             | Some(SettingsItem::RoundingIncrement)
             | Some(SettingsItem::RoundingMode) => "Up/Down change • Enter save • Esc cancel",

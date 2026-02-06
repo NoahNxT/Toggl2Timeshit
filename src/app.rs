@@ -7,9 +7,11 @@ use std::time::{Duration, Instant};
 use crate::dates::{DateRange, parse_date};
 use crate::grouping::{GroupedEntry, GroupedProject, group_entries};
 use crate::models::{Client as TogglClientModel, Project, TimeEntry, Workspace};
-use crate::rollups::{DailyTotal, PeriodRollup, Rollups, build_rollups};
+use crate::rollups::{DailyTotal, PeriodRollup, Rollups, WeekStart, build_rollups};
 use crate::rounding::{RoundingConfig, RoundingMode};
-use crate::storage::{self, CacheFile, CachedData, QuotaFile, ThemePreference};
+use crate::storage::{
+    self, CacheFile, CachedData, QuotaFile, RollupPreferences, ThemePreference,
+};
 use crate::toggl::{TogglClient, TogglError};
 use crate::update::{self, UpdateInfo};
 use arboard::Clipboard;
@@ -82,6 +84,8 @@ pub enum SettingsFocus {
 pub enum SettingsItem {
     Theme,
     TargetHours,
+    RollupsIncludeWeekends,
+    RollupsWeekStart,
     TimeRoundingToggle,
     RoundingIncrement,
     RoundingMode,
@@ -114,6 +118,7 @@ pub struct App {
     pub rollup_month_state: ListState,
     pub rollup_day_state: ListState,
     pub rollups_include_weekends: bool,
+    pub rollups_week_start: WeekStart,
     pub last_refresh: Option<DateTime<Local>>,
     pub show_help: bool,
     pub theme: ThemePreference,
@@ -143,6 +148,8 @@ pub struct App {
     settings_rounding_draft: RoundingConfig,
     settings_rounding_draft_enabled: bool,
     settings_theme_draft: ThemePreference,
+    settings_rollups_include_weekends_draft: bool,
+    settings_rollups_week_start_draft: WeekStart,
     status_created_at: Option<Instant>,
     last_status_snapshot: Option<String>,
     toast: Option<Toast>,
@@ -163,6 +170,7 @@ impl App {
         let theme = storage::read_theme().unwrap_or(ThemePreference::Terminal);
         let target_hours = storage::read_target_hours().unwrap_or(8.0);
         let rounding = storage::read_rounding();
+        let rollup_preferences = storage::read_rollup_preferences();
         let token_hash = token.as_ref().map(|value| storage::hash_token(value));
         let cache = token_hash
             .as_ref()
@@ -204,7 +212,8 @@ impl App {
             rollup_week_state,
             rollup_month_state,
             rollup_day_state,
-            rollups_include_weekends: false,
+            rollups_include_weekends: rollup_preferences.include_weekends,
+            rollups_week_start: rollup_preferences.week_start,
             last_refresh: None,
             show_help: false,
             theme,
@@ -225,7 +234,11 @@ impl App {
             date_end_input: String::new(),
             date_active_field: DateField::Start,
             settings_input: String::new(),
-            settings_categories: vec!["General".to_string(), "Integrations".to_string()],
+            settings_categories: vec![
+                "General".to_string(),
+                "Rollups".to_string(),
+                "Integrations".to_string(),
+            ],
             settings_state: {
                 let mut state = ListState::default();
                 state.select(Some(0));
@@ -242,6 +255,8 @@ impl App {
             settings_rounding_draft: RoundingConfig::default(),
             settings_rounding_draft_enabled: false,
             settings_theme_draft: theme,
+            settings_rollups_include_weekends_draft: rollup_preferences.include_weekends,
+            settings_rollups_week_start_draft: rollup_preferences.week_start,
             status_created_at: None,
             last_status_snapshot: None,
             toast: None,
@@ -651,16 +666,34 @@ impl App {
             KeyCode::Char('w') | KeyCode::Char('W') => self.set_rollup_view(RollupView::Weekly),
             KeyCode::Char('m') | KeyCode::Char('M') => self.set_rollup_view(RollupView::Monthly),
             KeyCode::Char('z') | KeyCode::Char('Z') => self.toggle_rollup_weekends(),
-            KeyCode::Left => self.set_rollup_focus(RollupFocus::Periods),
-            KeyCode::Right => self.set_rollup_focus(RollupFocus::Days),
-            KeyCode::Tab => self.toggle_rollup_focus(),
-            KeyCode::Up => match self.rollup_focus {
+            KeyCode::Left => match self.rollup_focus {
                 RollupFocus::Periods => self.select_previous_rollup_period(),
                 RollupFocus::Days => self.select_previous_rollup_day(),
             },
-            KeyCode::Down => match self.rollup_focus {
+            KeyCode::Right => match self.rollup_focus {
                 RollupFocus::Periods => self.select_next_rollup_period(),
                 RollupFocus::Days => self.select_next_rollup_day(),
+            },
+            KeyCode::Tab => self.toggle_rollup_focus(),
+            KeyCode::Up => match self.rollup_focus {
+                RollupFocus::Periods => self.select_previous_rollup_period(),
+                RollupFocus::Days => {
+                    if self.rollup_view == RollupView::Monthly {
+                        self.select_previous_rollup_day_by(self.rollup_vertical_step());
+                    } else {
+                        self.select_previous_rollup_day();
+                    }
+                }
+            },
+            KeyCode::Down => match self.rollup_focus {
+                RollupFocus::Periods => self.select_next_rollup_period(),
+                RollupFocus::Days => {
+                    if self.rollup_view == RollupView::Monthly {
+                        self.select_next_rollup_day_by(self.rollup_vertical_step());
+                    } else {
+                        self.select_next_rollup_day();
+                    }
+                }
             },
             _ => {}
         }
@@ -880,6 +913,13 @@ impl App {
                 SettingsItem::Theme => {
                     self.cycle_theme(true);
                 }
+                SettingsItem::RollupsIncludeWeekends => {
+                    self.settings_rollups_include_weekends_draft =
+                        !self.settings_rollups_include_weekends_draft;
+                }
+                SettingsItem::RollupsWeekStart => {
+                    self.cycle_rollup_week_start(true);
+                }
                 SettingsItem::TimeRoundingToggle => {
                     self.settings_rounding_draft_enabled = !self.settings_rounding_draft_enabled;
                 }
@@ -894,6 +934,13 @@ impl App {
             KeyCode::Down => match item {
                 SettingsItem::Theme => {
                     self.cycle_theme(false);
+                }
+                SettingsItem::RollupsIncludeWeekends => {
+                    self.settings_rollups_include_weekends_draft =
+                        !self.settings_rollups_include_weekends_draft;
+                }
+                SettingsItem::RollupsWeekStart => {
+                    self.cycle_rollup_week_start(false);
                 }
                 SettingsItem::TimeRoundingToggle => {
                     self.settings_rounding_draft_enabled = !self.settings_rounding_draft_enabled;
@@ -934,6 +981,8 @@ impl App {
                         self.settings_input.push(ch);
                     }
                 }
+                SettingsItem::RollupsIncludeWeekends => {}
+                SettingsItem::RollupsWeekStart => {}
                 _ => {}
             },
             _ => {}
@@ -1022,6 +1071,10 @@ impl App {
     fn sync_settings_items_for_category(&mut self) {
         self.settings_items = match self.settings_selected_category() {
             "Integrations" => vec![SettingsItem::TogglToken],
+            "Rollups" => vec![
+                SettingsItem::RollupsIncludeWeekends,
+                SettingsItem::RollupsWeekStart,
+            ],
             _ => vec![
                 SettingsItem::Theme,
                 SettingsItem::TargetHours,
@@ -1051,6 +1104,12 @@ impl App {
             }
             SettingsItem::TargetHours => {
                 self.settings_input = format!("{:.2}", self.target_hours);
+            }
+            SettingsItem::RollupsIncludeWeekends => {
+                self.settings_rollups_include_weekends_draft = self.rollups_include_weekends;
+            }
+            SettingsItem::RollupsWeekStart => {
+                self.settings_rollups_week_start_draft = self.rollups_week_start;
             }
             SettingsItem::TogglToken => {
                 self.settings_input = self.token.clone().unwrap_or_default();
@@ -1089,6 +1148,23 @@ impl App {
                 self.set_toast(format!("Theme set to {label}."), false);
                 self.settings_edit_item = None;
                 self.settings_focus = SettingsFocus::Items;
+            }
+            SettingsItem::RollupsIncludeWeekends | SettingsItem::RollupsWeekStart => {
+                let next = RollupPreferences {
+                    include_weekends: self.settings_rollups_include_weekends_draft,
+                    week_start: self.settings_rollups_week_start_draft,
+                };
+                if let Err(err) = storage::write_rollup_preferences(next) {
+                    self.status = Some(format!("Failed to save: {err}"));
+                    return;
+                }
+                self.rollups_include_weekends = next.include_weekends;
+                self.rollups_week_start = next.week_start;
+                self.status = Some("Rollup defaults updated.".to_string());
+                self.set_toast("Rollup defaults saved.", false);
+                self.settings_edit_item = None;
+                self.settings_focus = SettingsFocus::Items;
+                self.rebuild_rollups();
             }
             SettingsItem::TargetHours => {
                 let parsed = match self.parse_target_hours() {
@@ -1205,6 +1281,16 @@ impl App {
             }
         };
         self.settings_theme_draft = values[next_index];
+    }
+
+    fn cycle_rollup_week_start(&mut self, up: bool) {
+        self.settings_rollups_week_start_draft = match (self.settings_rollups_week_start_draft, up)
+        {
+            (WeekStart::Monday, true) => WeekStart::Sunday,
+            (WeekStart::Sunday, true) => WeekStart::Monday,
+            (WeekStart::Monday, false) => WeekStart::Sunday,
+            (WeekStart::Sunday, false) => WeekStart::Monday,
+        };
     }
 
     fn cycle_rounding_increment(&mut self, up: bool) {
@@ -1376,6 +1462,26 @@ impl App {
         }
     }
 
+    pub fn settings_rollups_include_weekends_display(&self) -> bool {
+        if self.settings_focus == SettingsFocus::Edit
+            && self.settings_edit_item == Some(SettingsItem::RollupsIncludeWeekends)
+        {
+            self.settings_rollups_include_weekends_draft
+        } else {
+            self.rollups_include_weekends
+        }
+    }
+
+    pub fn settings_rollups_week_start_display(&self) -> WeekStart {
+        if self.settings_focus == SettingsFocus::Edit
+            && self.settings_edit_item == Some(SettingsItem::RollupsWeekStart)
+        {
+            self.settings_rollups_week_start_draft
+        } else {
+            self.rollups_week_start
+        }
+    }
+
     fn select_previous_project(&mut self) {
         if self.grouped.is_empty() {
             return;
@@ -1476,8 +1582,10 @@ impl App {
                 rollup_start,
                 rollup_end,
                 self.rounding.as_ref(),
+                self.rollups_week_start,
             );
             self.align_rollup_selection_to_active_range();
+            self.align_rollup_day_selection_to_active_range();
             self.ensure_rollup_selections();
             return;
         };
@@ -1502,8 +1610,10 @@ impl App {
             rollup_start,
             rollup_end,
             self.rounding.as_ref(),
+            self.rollups_week_start,
         );
         self.align_rollup_selection_to_active_range();
+        self.align_rollup_day_selection_to_active_range();
         self.ensure_rollup_selections();
     }
 
@@ -1533,6 +1643,24 @@ impl App {
         {
             self.rollup_month_state.select(Some(index));
         }
+    }
+
+    fn align_rollup_day_selection_to_active_range(&mut self) {
+        let target_day = self.date_range.end_date();
+        let daily = self.rollup_daily_for_selected_period();
+        if daily.is_empty() {
+            self.rollup_day_state.select(None);
+            return;
+        }
+        if let Some(index) = daily.iter().position(|day| day.date == target_day) {
+            self.rollup_day_state.select(Some(index));
+            return;
+        }
+        let fallback = daily
+            .iter()
+            .rposition(|day| day.date <= target_day)
+            .unwrap_or(0);
+        self.rollup_day_state.select(Some(fallback));
     }
 
     fn exit_entries_focus(&mut self) {
@@ -1583,10 +1711,6 @@ impl App {
         self.ensure_rollup_selections();
     }
 
-    fn set_rollup_focus(&mut self, focus: RollupFocus) {
-        self.rollup_focus = focus;
-    }
-
     fn toggle_rollup_focus(&mut self) {
         self.rollup_focus = match self.rollup_focus {
             RollupFocus::Periods => RollupFocus::Days,
@@ -1596,6 +1720,7 @@ impl App {
 
     fn toggle_rollup_weekends(&mut self) {
         self.rollups_include_weekends = !self.rollups_include_weekends;
+        self.align_rollup_day_selection_to_active_range();
         self.ensure_rollup_day_selection();
         if self.rollups_include_weekends {
             self.status = Some("Rollups: weekends included.".to_string());
@@ -1716,6 +1841,10 @@ impl App {
         self.rollup_daily_for_selected_period().len()
     }
 
+    fn rollup_vertical_step(&self) -> usize {
+        if self.rollups_include_weekends { 7 } else { 5 }
+    }
+
     fn is_rollup_day_included(&self, day: NaiveDate) -> bool {
         if self.rollups_include_weekends {
             true
@@ -1739,6 +1868,25 @@ impl App {
         self.rollup_day_state.select(Some(new_index));
     }
 
+    fn select_previous_rollup_day_by(&mut self, step: usize) {
+        let count = self.rollup_days_len();
+        if count == 0 {
+            self.rollup_day_state.select(None);
+            return;
+        }
+        let step = step % count;
+        if step == 0 {
+            return;
+        }
+        let selected = self.rollup_day_state.selected().unwrap_or(0);
+        let new_index = if selected >= step {
+            selected - step
+        } else {
+            count + selected - step
+        };
+        self.rollup_day_state.select(Some(new_index));
+    }
+
     fn select_next_rollup_day(&mut self) {
         let count = self.rollup_days_len();
         if count == 0 {
@@ -1751,6 +1899,21 @@ impl App {
         } else {
             selected + 1
         };
+        self.rollup_day_state.select(Some(new_index));
+    }
+
+    fn select_next_rollup_day_by(&mut self, step: usize) {
+        let count = self.rollup_days_len();
+        if count == 0 {
+            self.rollup_day_state.select(None);
+            return;
+        }
+        let step = step % count;
+        if step == 0 {
+            return;
+        }
+        let selected = self.rollup_day_state.selected().unwrap_or(0);
+        let new_index = (selected + step) % count;
         self.rollup_day_state.select(Some(new_index));
     }
 
