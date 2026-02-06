@@ -39,6 +39,12 @@ jobs:
               with open(path, "w", encoding="utf-8") as f:
                   f.write(data)
           replace_version("Cargo.toml")
+          # Update Chocolatey nuspec version
+          with open("packaging/chocolatey/timeshit.nuspec", "r", encoding="utf-8") as f:
+              nuspec = f.read()
+          nuspec = re.sub(r"<version>[^<]*</version>", f"<version>{version}</version>", nuspec, count=1)
+          with open("packaging/chocolatey/timeshit.nuspec", "w", encoding="utf-8") as f:
+              f.write(nuspec)
           # Update Cargo.lock package version entry
           with open("Cargo.lock", "r", encoding="utf-8") as f:
               lines = f.readlines()
@@ -64,7 +70,7 @@ jobs:
           git fetch --tags
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
-          git add Cargo.toml Cargo.lock
+          git add Cargo.toml Cargo.lock packaging/chocolatey/timeshit.nuspec
           if ! git diff --cached --quiet; then
             git commit -m "🔖 bump version to v${{ steps.set_tag.outputs.version }}"
           fi
