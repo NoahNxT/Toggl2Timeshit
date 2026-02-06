@@ -1,5 +1,5 @@
 use chrono::{DateTime, Datelike, Local, NaiveDate};
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::widgets::ListState;
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
@@ -23,6 +23,7 @@ pub enum Mode {
     Loading,
     Dashboard,
     Rollups,
+    RefetchConfirm,
     Login,
     WorkspaceSelect,
     DateInput(DateInputMode),
@@ -92,6 +93,13 @@ pub enum SettingsItem {
     TogglToken,
 }
 
+#[derive(Debug, Clone)]
+struct RefetchPlan {
+    start: NaiveDate,
+    end: NaiveDate,
+    scope_label: String,
+}
+
 pub struct App {
     pub should_quit: bool,
     pub needs_refresh: bool,
@@ -131,6 +139,7 @@ pub struct App {
     cache: Option<CacheFile>,
     quota: QuotaFile,
     refresh_intent: RefreshIntent,
+    refresh_resume_mode: Option<Mode>,
     update_resume_mode: Option<Mode>,
     needs_update_check: bool,
     needs_update_install: bool,
@@ -150,6 +159,7 @@ pub struct App {
     settings_theme_draft: ThemePreference,
     settings_rollups_include_weekends_draft: bool,
     settings_rollups_week_start_draft: WeekStart,
+    refetch_plan: Option<RefetchPlan>,
     status_created_at: Option<Instant>,
     last_status_snapshot: Option<String>,
     toast: Option<Toast>,
@@ -226,6 +236,7 @@ impl App {
             cache,
             quota,
             refresh_intent: RefreshIntent::CacheOnly,
+            refresh_resume_mode: None,
             update_resume_mode: None,
             needs_update_check,
             needs_update_install: false,
@@ -257,6 +268,7 @@ impl App {
             settings_theme_draft: theme,
             settings_rollups_include_weekends_draft: rollup_preferences.include_weekends,
             settings_rollups_week_start_draft: rollup_preferences.week_start,
+            refetch_plan: None,
             status_created_at: None,
             last_status_snapshot: None,
             toast: None,
@@ -269,6 +281,7 @@ impl App {
             Mode::WorkspaceSelect => self.handle_workspace_input(key),
             Mode::DateInput(mode) => self.handle_date_input(mode, key),
             Mode::Settings => self.handle_settings_input(key),
+            Mode::RefetchConfirm => self.handle_refetch_confirm_input(key),
             Mode::Updating => {}
             Mode::Rollups => self.handle_rollups_input(key),
             Mode::Dashboard | Mode::Loading | Mode::Error => self.handle_dashboard_input(key),
@@ -289,6 +302,19 @@ impl App {
 
     pub fn take_exit_message(&mut self) -> Option<String> {
         self.exit_message.take()
+    }
+
+    pub fn refetch_plan_view(&self) -> Option<RefetchPlanView> {
+        let plan = self.refetch_plan.as_ref()?;
+        let days = days_between(plan.start, plan.end);
+        Some(RefetchPlanView {
+            scope_label: plan.scope_label.clone(),
+            start: plan.start.format("%Y-%m-%d").to_string(),
+            end: plan.end.format("%Y-%m-%d").to_string(),
+            days,
+            estimated_calls: days as u32,
+            remaining_calls: self.quota_remaining(),
+        })
     }
 
     pub fn check_for_update(&mut self) {
@@ -372,6 +398,7 @@ impl App {
         self.needs_refresh = false;
         self.status = None;
         self.ensure_quota_today();
+        let resume_mode = self.refresh_resume_mode.take();
 
         let token = match self.token.clone() {
             Some(token) => token,
@@ -519,7 +546,7 @@ impl App {
             self.status = Some(message);
         }
 
-        self.mode = Mode::Dashboard;
+        self.mode = resume_mode.unwrap_or(Mode::Dashboard);
     }
 
     fn handle_error(&mut self, err: TogglError) {
@@ -666,6 +693,12 @@ impl App {
             KeyCode::Char('w') | KeyCode::Char('W') => self.set_rollup_view(RollupView::Weekly),
             KeyCode::Char('m') | KeyCode::Char('M') => self.set_rollup_view(RollupView::Monthly),
             KeyCode::Char('z') | KeyCode::Char('Z') => self.toggle_rollup_weekends(),
+            KeyCode::Char('R')
+                if key.modifiers.contains(KeyModifiers::SHIFT)
+                    || key.modifiers == KeyModifiers::NONE =>
+            {
+                self.open_rollup_refetch_confirm();
+            }
             KeyCode::Left => match self.rollup_focus {
                 RollupFocus::Periods => self.select_previous_rollup_period(),
                 RollupFocus::Days => self.select_previous_rollup_day(),
@@ -695,6 +728,20 @@ impl App {
                     }
                 }
             },
+            _ => {}
+        }
+    }
+
+    fn handle_refetch_confirm_input(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Char('q') => self.should_quit = true,
+            KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
+                self.refetch_plan = None;
+                self.mode = Mode::Rollups;
+            }
+            KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
+                self.execute_rollup_refetch();
+            }
             _ => {}
         }
     }
@@ -1729,6 +1776,142 @@ impl App {
         }
     }
 
+    fn open_rollup_refetch_confirm(&mut self) {
+        let Some(plan) = self.selected_rollup_refetch_plan() else {
+            self.status = Some("Select a rollup period/day first.".to_string());
+            self.set_toast("Select a rollup period/day first.", true);
+            return;
+        };
+        self.refetch_plan = Some(plan);
+        self.mode = Mode::RefetchConfirm;
+    }
+
+    fn selected_rollup_refetch_plan(&self) -> Option<RefetchPlan> {
+        if self.rollup_focus == RollupFocus::Days {
+            let daily = self.rollup_daily_for_selected_period();
+            if let Some(index) = self.rollup_day_state.selected() {
+                if let Some(day) = daily.get(index) {
+                    return Some(RefetchPlan {
+                        start: day.date,
+                        end: day.date,
+                        scope_label: format!("Day {}", day.date.format("%Y-%m-%d")),
+                    });
+                }
+            }
+        }
+
+        let period = self.rollup_selected_period()?;
+        let scope = match self.rollup_view {
+            RollupView::Weekly => "Week",
+            RollupView::Monthly => "Month",
+        };
+        Some(RefetchPlan {
+            start: period.start,
+            end: period.end,
+            scope_label: format!("{scope} {}", period.label),
+        })
+    }
+
+    fn execute_rollup_refetch(&mut self) {
+        let Some(plan) = self.refetch_plan.clone() else {
+            self.mode = Mode::Rollups;
+            return;
+        };
+
+        let token = match self.token.clone() {
+            Some(token) => token,
+            None => {
+                self.refetch_plan = None;
+                self.mode = Mode::Login;
+                return;
+            }
+        };
+        let workspace_id = match self.selected_workspace.as_ref().map(|workspace| workspace.id) {
+            Some(id) => id,
+            None => {
+                self.refetch_plan = None;
+                self.mode = Mode::WorkspaceSelect;
+                return;
+            }
+        };
+
+        self.ensure_quota_today();
+        let client = TogglClient::new(token);
+        let dates = date_span(plan.start, plan.end);
+        let total_days = dates.len();
+        let mut fetched_days: Vec<NaiveDate> = Vec::new();
+        let mut stop_reason: Option<String> = None;
+
+        for (index, day) in dates.iter().enumerate() {
+            if self.quota_remaining() == 0 {
+                stop_reason = Some("local quota reached".to_string());
+                if index < total_days {
+                    break;
+                }
+            }
+
+            self.consume_quota();
+            let (start_rfc, end_rfc) = DateRange::from_bounds(*day, *day).as_rfc3339();
+            match client.fetch_time_entries(&start_rfc, &end_rfc) {
+                Ok(entries) => {
+                    self.update_cache_time_entries(workspace_id, &start_rfc, &end_rfc, &entries);
+                    fetched_days.push(*day);
+                }
+                Err(TogglError::Unauthorized) => {
+                    self.refetch_plan = None;
+                    self.handle_error(TogglError::Unauthorized);
+                    return;
+                }
+                Err(TogglError::PaymentRequired) => {
+                    stop_reason = Some("Toggl returned 402 Payment Required".to_string());
+                    break;
+                }
+                Err(TogglError::RateLimited) => {
+                    stop_reason = Some("Toggl rate limit reached".to_string());
+                    break;
+                }
+                Err(TogglError::ServerError(message)) | Err(TogglError::Network(message)) => {
+                    stop_reason = Some(message);
+                    break;
+                }
+            }
+        }
+
+        self.refetch_plan = None;
+        self.mode = Mode::Loading;
+        self.refresh_resume_mode = Some(Mode::Rollups);
+        self.refresh_intent = RefreshIntent::CacheOnly;
+        self.needs_refresh = true;
+
+        if fetched_days.len() == total_days {
+            let message = format!("Refetched {} day(s) for {}.", total_days, plan.scope_label);
+            self.status = Some(message.clone());
+            self.set_toast(message, false);
+            return;
+        }
+
+        let skipped_days = if fetched_days.len() < total_days {
+            dates
+                .iter()
+                .skip(fetched_days.len())
+                .copied()
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        let reason = stop_reason.unwrap_or_else(|| "fetch interrupted".to_string());
+        let message = format!(
+            "Partial refetch {}/{} day(s). Cached: {}. Stopped: {}. Skipped: {}.",
+            fetched_days.len(),
+            total_days,
+            format_day_spans(&fetched_days),
+            reason,
+            format_day_spans(&skipped_days)
+        );
+        self.status = Some(message.clone());
+        self.set_toast(message, true);
+    }
+
     fn rollup_periods(&self) -> &[PeriodRollup] {
         match self.rollup_view {
             RollupView::Weekly => &self.rollups.weekly,
@@ -2663,6 +2846,61 @@ fn month_end(date: NaiveDate) -> NaiveDate {
         .unwrap_or(date)
 }
 
+fn days_between(start: NaiveDate, end: NaiveDate) -> usize {
+    if end < start {
+        0
+    } else {
+        (end - start).num_days() as usize + 1
+    }
+}
+
+fn date_span(start: NaiveDate, end: NaiveDate) -> Vec<NaiveDate> {
+    let mut days = Vec::new();
+    let mut current = start;
+    while current <= end {
+        days.push(current);
+        current = current.succ_opt().unwrap_or(current + chrono::Duration::days(1));
+    }
+    days
+}
+
+fn format_day_spans(days: &[NaiveDate]) -> String {
+    if days.is_empty() {
+        return "none".to_string();
+    }
+
+    let mut sorted = days.to_vec();
+    sorted.sort_unstable();
+    sorted.dedup();
+
+    let mut spans: Vec<String> = Vec::new();
+    let mut range_start = sorted[0];
+    let mut range_end = sorted[0];
+
+    for day in sorted.iter().skip(1).copied() {
+        let expected_next = range_end
+            .succ_opt()
+            .unwrap_or(range_end + chrono::Duration::days(1));
+        if day == expected_next {
+            range_end = day;
+            continue;
+        }
+        spans.push(format_date_span(range_start, range_end));
+        range_start = day;
+        range_end = day;
+    }
+    spans.push(format_date_span(range_start, range_end));
+    spans.join(", ")
+}
+
+fn format_date_span(start: NaiveDate, end: NaiveDate) -> String {
+    if start == end {
+        start.format("%Y-%m-%d").to_string()
+    } else {
+        format!("{}→{}", start.format("%Y-%m-%d"), end.format("%Y-%m-%d"))
+    }
+}
+
 fn theme_label(theme: ThemePreference) -> &'static str {
     match theme {
         ThemePreference::Terminal => "Terminal",
@@ -2680,4 +2918,13 @@ struct Toast {
 pub struct ToastView {
     pub message: String,
     pub is_error: bool,
+}
+
+pub struct RefetchPlanView {
+    pub scope_label: String,
+    pub start: String,
+    pub end: String,
+    pub days: usize,
+    pub estimated_calls: u32,
+    pub remaining_calls: u32,
 }

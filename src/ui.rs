@@ -20,7 +20,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let size = frame.area();
     let theme = theme_from(app.theme);
     draw_background(frame, size, &theme);
-    if matches!(app.mode, Mode::Rollups) {
+    if matches!(app.mode, Mode::Rollups | Mode::RefetchConfirm) {
         draw_rollups(frame, app, size, &theme);
     } else {
         draw_dashboard(frame, app, size, &theme);
@@ -39,6 +39,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         Mode::WorkspaceSelect => draw_workspace_select(frame, app, size, &theme),
         Mode::DateInput(mode) => draw_date_input(frame, app, size, mode, &theme),
         Mode::Settings => draw_settings(frame, app, size, &theme),
+        Mode::RefetchConfirm => draw_refetch_confirm(frame, app, size, &theme),
         Mode::Dashboard | Mode::Rollups => {}
     }
 
@@ -400,6 +401,8 @@ fn rollups_footer_line(app: &mut App, theme: &Theme) -> Line<'static> {
         Span::raw(" · "),
         Span::styled("z weekends", theme.muted_style()),
         Span::raw(" · "),
+        Span::styled("R refetch scope", theme.muted_style()),
+        Span::raw(" · "),
         Span::styled("h help", theme.muted_style()),
         Span::raw(" · "),
         Span::styled("Esc back", theme.muted_style()),
@@ -587,6 +590,62 @@ fn draw_date_input(frame: &mut Frame, app: &App, area: Rect, mode: DateInputMode
     let paragraph = Paragraph::new(lines)
         .alignment(Alignment::Left)
         .block(panel_block("Date Filter", theme))
+        .wrap(Wrap { trim: true });
+    frame.render_widget(paragraph, block);
+}
+
+fn draw_refetch_confirm(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
+    let block = centered_rect(72, 42, area);
+    frame.render_widget(Clear, block);
+
+    let lines = if let Some(plan) = app.refetch_plan_view() {
+        let warning = if plan.estimated_calls > plan.remaining_calls {
+            format!(
+                "Warning: needs ~{} call(s), only {} local calls remain.",
+                plan.estimated_calls, plan.remaining_calls
+            )
+        } else {
+            format!(
+                "This may use up to {} API call(s). Remaining local budget: {}.",
+                plan.estimated_calls, plan.remaining_calls
+            )
+        };
+
+        vec![
+            Line::from(Span::styled(
+                "Refetch from Toggl API",
+                Style::default().add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from(format!("Scope: {}", plan.scope_label)),
+            Line::from(format!("Range: {} → {}", plan.start, plan.end)),
+            Line::from(format!("Days: {}", plan.days)),
+            Line::from(""),
+            Line::from(Span::styled(
+                warning,
+                Style::default().fg(theme.error),
+            )),
+            Line::from(Span::styled(
+                "Free Toggl accounts usually have a hard daily limit (about 30 calls).",
+                Style::default().fg(theme.error),
+            )),
+            Line::from(Span::styled(
+                "If quota is exhausted (402/429), refetch stops and only fetched days are cached.",
+                Style::default().fg(theme.error),
+            )),
+            Line::from(""),
+            Line::from("Press Enter or y to continue • n or Esc to cancel"),
+        ]
+    } else {
+        vec![
+            Line::from("No refetch scope selected."),
+            Line::from("Press Esc to close."),
+        ]
+    };
+
+    let paragraph = Paragraph::new(lines)
+        .alignment(Alignment::Left)
+        .block(panel_block("Confirm Refetch", theme))
         .wrap(Wrap { trim: true });
     frame.render_widget(paragraph, block);
 }
@@ -914,6 +973,10 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
         Row::new(vec![
             Cell::from(Span::styled("z", key_style)),
             Cell::from("Toggle weekends in rollups"),
+        ]),
+        Row::new(vec![
+            Cell::from(Span::styled("Shift+R", key_style)),
+            Cell::from("Refetch selected day/week/month"),
         ]),
         Row::new(vec![
             Cell::from(Span::styled("Left/Right", key_style)),
