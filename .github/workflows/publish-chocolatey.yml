@@ -48,12 +48,6 @@ jobs:
           $version = $tag.TrimStart("v")
           "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-      - name: Checkout release tag
-        shell: pwsh
-        run: |
-          git fetch --tags
-          git checkout $env:RELEASE_TAG
-
       - name: Download Windows release asset
         shell: pwsh
         run: |
