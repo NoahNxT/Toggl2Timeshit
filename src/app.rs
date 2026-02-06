@@ -1,5 +1,5 @@
-use chrono::{DateTime, Local};
-use crossterm::event::{KeyCode, KeyEvent};
+use chrono::{DateTime, Datelike, Local, NaiveDate};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::widgets::ListState;
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
@@ -7,9 +7,11 @@ use std::time::{Duration, Instant};
 use crate::dates::{DateRange, parse_date};
 use crate::grouping::{GroupedEntry, GroupedProject, group_entries};
 use crate::models::{Client as TogglClientModel, Project, TimeEntry, Workspace};
-use crate::rollups::{DailyTotal, PeriodRollup, Rollups, build_rollups};
+use crate::rollups::{DailyTotal, PeriodRollup, Rollups, WeekStart, build_rollups};
 use crate::rounding::{RoundingConfig, RoundingMode};
-use crate::storage::{self, CacheFile, CachedData, QuotaFile, ThemePreference};
+use crate::storage::{
+    self, CacheFile, CachedData, QuotaFile, RollupPreferences, ThemePreference,
+};
 use crate::toggl::{TogglClient, TogglError};
 use crate::update::{self, UpdateInfo};
 use arboard::Clipboard;
@@ -21,6 +23,7 @@ pub enum Mode {
     Loading,
     Dashboard,
     Rollups,
+    RefetchConfirm,
     Login,
     WorkspaceSelect,
     DateInput(DateInputMode),
@@ -82,10 +85,19 @@ pub enum SettingsFocus {
 pub enum SettingsItem {
     Theme,
     TargetHours,
+    RollupsIncludeWeekends,
+    RollupsWeekStart,
     TimeRoundingToggle,
     RoundingIncrement,
     RoundingMode,
     TogglToken,
+}
+
+#[derive(Debug, Clone)]
+struct RefetchPlan {
+    start: NaiveDate,
+    end: NaiveDate,
+    scope_label: String,
 }
 
 pub struct App {
@@ -113,6 +125,8 @@ pub struct App {
     pub rollup_week_state: ListState,
     pub rollup_month_state: ListState,
     pub rollup_day_state: ListState,
+    pub rollups_include_weekends: bool,
+    pub rollups_week_start: WeekStart,
     pub last_refresh: Option<DateTime<Local>>,
     pub show_help: bool,
     pub theme: ThemePreference,
@@ -125,6 +139,7 @@ pub struct App {
     cache: Option<CacheFile>,
     quota: QuotaFile,
     refresh_intent: RefreshIntent,
+    refresh_resume_mode: Option<Mode>,
     update_resume_mode: Option<Mode>,
     needs_update_check: bool,
     needs_update_install: bool,
@@ -142,6 +157,9 @@ pub struct App {
     settings_rounding_draft: RoundingConfig,
     settings_rounding_draft_enabled: bool,
     settings_theme_draft: ThemePreference,
+    settings_rollups_include_weekends_draft: bool,
+    settings_rollups_week_start_draft: WeekStart,
+    refetch_plan: Option<RefetchPlan>,
     status_created_at: Option<Instant>,
     last_status_snapshot: Option<String>,
     toast: Option<Toast>,
@@ -162,6 +180,7 @@ impl App {
         let theme = storage::read_theme().unwrap_or(ThemePreference::Terminal);
         let target_hours = storage::read_target_hours().unwrap_or(8.0);
         let rounding = storage::read_rounding();
+        let rollup_preferences = storage::read_rollup_preferences();
         let token_hash = token.as_ref().map(|value| storage::hash_token(value));
         let cache = token_hash
             .as_ref()
@@ -203,6 +222,8 @@ impl App {
             rollup_week_state,
             rollup_month_state,
             rollup_day_state,
+            rollups_include_weekends: rollup_preferences.include_weekends,
+            rollups_week_start: rollup_preferences.week_start,
             last_refresh: None,
             show_help: false,
             theme,
@@ -215,6 +236,7 @@ impl App {
             cache,
             quota,
             refresh_intent: RefreshIntent::CacheOnly,
+            refresh_resume_mode: None,
             update_resume_mode: None,
             needs_update_check,
             needs_update_install: false,
@@ -223,7 +245,11 @@ impl App {
             date_end_input: String::new(),
             date_active_field: DateField::Start,
             settings_input: String::new(),
-            settings_categories: vec!["General".to_string(), "Integrations".to_string()],
+            settings_categories: vec![
+                "General".to_string(),
+                "Rollups".to_string(),
+                "Integrations".to_string(),
+            ],
             settings_state: {
                 let mut state = ListState::default();
                 state.select(Some(0));
@@ -240,6 +266,9 @@ impl App {
             settings_rounding_draft: RoundingConfig::default(),
             settings_rounding_draft_enabled: false,
             settings_theme_draft: theme,
+            settings_rollups_include_weekends_draft: rollup_preferences.include_weekends,
+            settings_rollups_week_start_draft: rollup_preferences.week_start,
+            refetch_plan: None,
             status_created_at: None,
             last_status_snapshot: None,
             toast: None,
@@ -252,6 +281,7 @@ impl App {
             Mode::WorkspaceSelect => self.handle_workspace_input(key),
             Mode::DateInput(mode) => self.handle_date_input(mode, key),
             Mode::Settings => self.handle_settings_input(key),
+            Mode::RefetchConfirm => self.handle_refetch_confirm_input(key),
             Mode::Updating => {}
             Mode::Rollups => self.handle_rollups_input(key),
             Mode::Dashboard | Mode::Loading | Mode::Error => self.handle_dashboard_input(key),
@@ -272,6 +302,19 @@ impl App {
 
     pub fn take_exit_message(&mut self) -> Option<String> {
         self.exit_message.take()
+    }
+
+    pub fn refetch_plan_view(&self) -> Option<RefetchPlanView> {
+        let plan = self.refetch_plan.as_ref()?;
+        let days = days_between(plan.start, plan.end);
+        Some(RefetchPlanView {
+            scope_label: plan.scope_label.clone(),
+            start: plan.start.format("%Y-%m-%d").to_string(),
+            end: plan.end.format("%Y-%m-%d").to_string(),
+            days,
+            estimated_calls: days as u32,
+            remaining_calls: self.quota_remaining(),
+        })
     }
 
     pub fn check_for_update(&mut self) {
@@ -355,6 +398,7 @@ impl App {
         self.needs_refresh = false;
         self.status = None;
         self.ensure_quota_today();
+        let resume_mode = self.refresh_resume_mode.take();
 
         let token = match self.token.clone() {
             Some(token) => token,
@@ -484,13 +528,7 @@ impl App {
         self.client_names = client_names;
         self.grouped = grouped;
         self.total_hours = total_hours;
-        self.rollups = build_rollups(
-            &self.time_entries,
-            self.date_range.start_date(),
-            self.date_range.end_date(),
-            self.rounding.as_ref(),
-        );
-        self.ensure_rollup_selections();
+        self.rebuild_rollups();
         self.last_refresh = if allow_api && cache_reason.is_none() {
             Some(Local::now())
         } else {
@@ -508,7 +546,7 @@ impl App {
             self.status = Some(message);
         }
 
-        self.mode = Mode::Dashboard;
+        self.mode = resume_mode.unwrap_or(Mode::Dashboard);
     }
 
     fn handle_error(&mut self, err: TogglError) {
@@ -654,17 +692,56 @@ impl App {
             KeyCode::Char('h') => self.show_help = true,
             KeyCode::Char('w') | KeyCode::Char('W') => self.set_rollup_view(RollupView::Weekly),
             KeyCode::Char('m') | KeyCode::Char('M') => self.set_rollup_view(RollupView::Monthly),
-            KeyCode::Left => self.set_rollup_focus(RollupFocus::Periods),
-            KeyCode::Right => self.set_rollup_focus(RollupFocus::Days),
-            KeyCode::Tab => self.toggle_rollup_focus(),
-            KeyCode::Up => match self.rollup_focus {
+            KeyCode::Char('z') | KeyCode::Char('Z') => self.toggle_rollup_weekends(),
+            KeyCode::Char('R')
+                if key.modifiers.contains(KeyModifiers::SHIFT)
+                    || key.modifiers == KeyModifiers::NONE =>
+            {
+                self.open_rollup_refetch_confirm();
+            }
+            KeyCode::Left => match self.rollup_focus {
                 RollupFocus::Periods => self.select_previous_rollup_period(),
                 RollupFocus::Days => self.select_previous_rollup_day(),
             },
-            KeyCode::Down => match self.rollup_focus {
+            KeyCode::Right => match self.rollup_focus {
                 RollupFocus::Periods => self.select_next_rollup_period(),
                 RollupFocus::Days => self.select_next_rollup_day(),
             },
+            KeyCode::Tab => self.toggle_rollup_focus(),
+            KeyCode::Up => match self.rollup_focus {
+                RollupFocus::Periods => self.select_previous_rollup_period(),
+                RollupFocus::Days => {
+                    if self.rollup_view == RollupView::Monthly {
+                        self.select_previous_rollup_day_by(self.rollup_vertical_step());
+                    } else {
+                        self.select_previous_rollup_day();
+                    }
+                }
+            },
+            KeyCode::Down => match self.rollup_focus {
+                RollupFocus::Periods => self.select_next_rollup_period(),
+                RollupFocus::Days => {
+                    if self.rollup_view == RollupView::Monthly {
+                        self.select_next_rollup_day_by(self.rollup_vertical_step());
+                    } else {
+                        self.select_next_rollup_day();
+                    }
+                }
+            },
+            _ => {}
+        }
+    }
+
+    fn handle_refetch_confirm_input(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Char('q') => self.should_quit = true,
+            KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
+                self.refetch_plan = None;
+                self.mode = Mode::Rollups;
+            }
+            KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
+                self.execute_rollup_refetch();
+            }
             _ => {}
         }
     }
@@ -883,6 +960,13 @@ impl App {
                 SettingsItem::Theme => {
                     self.cycle_theme(true);
                 }
+                SettingsItem::RollupsIncludeWeekends => {
+                    self.settings_rollups_include_weekends_draft =
+                        !self.settings_rollups_include_weekends_draft;
+                }
+                SettingsItem::RollupsWeekStart => {
+                    self.cycle_rollup_week_start(true);
+                }
                 SettingsItem::TimeRoundingToggle => {
                     self.settings_rounding_draft_enabled = !self.settings_rounding_draft_enabled;
                 }
@@ -897,6 +981,13 @@ impl App {
             KeyCode::Down => match item {
                 SettingsItem::Theme => {
                     self.cycle_theme(false);
+                }
+                SettingsItem::RollupsIncludeWeekends => {
+                    self.settings_rollups_include_weekends_draft =
+                        !self.settings_rollups_include_weekends_draft;
+                }
+                SettingsItem::RollupsWeekStart => {
+                    self.cycle_rollup_week_start(false);
                 }
                 SettingsItem::TimeRoundingToggle => {
                     self.settings_rounding_draft_enabled = !self.settings_rounding_draft_enabled;
@@ -937,6 +1028,8 @@ impl App {
                         self.settings_input.push(ch);
                     }
                 }
+                SettingsItem::RollupsIncludeWeekends => {}
+                SettingsItem::RollupsWeekStart => {}
                 _ => {}
             },
             _ => {}
@@ -995,13 +1088,7 @@ impl App {
 
         self.grouped = grouped;
         self.total_hours = total_hours;
-        self.rollups = build_rollups(
-            &self.time_entries,
-            self.date_range.start_date(),
-            self.date_range.end_date(),
-            self.rounding.as_ref(),
-        );
-        self.ensure_rollup_selections();
+        self.rebuild_rollups();
 
         if let Some((client_name, project_name)) = selected_project_key {
             if let Some(index) = self.grouped.iter().position(|project| {
@@ -1031,6 +1118,10 @@ impl App {
     fn sync_settings_items_for_category(&mut self) {
         self.settings_items = match self.settings_selected_category() {
             "Integrations" => vec![SettingsItem::TogglToken],
+            "Rollups" => vec![
+                SettingsItem::RollupsIncludeWeekends,
+                SettingsItem::RollupsWeekStart,
+            ],
             _ => vec![
                 SettingsItem::Theme,
                 SettingsItem::TargetHours,
@@ -1060,6 +1151,12 @@ impl App {
             }
             SettingsItem::TargetHours => {
                 self.settings_input = format!("{:.2}", self.target_hours);
+            }
+            SettingsItem::RollupsIncludeWeekends => {
+                self.settings_rollups_include_weekends_draft = self.rollups_include_weekends;
+            }
+            SettingsItem::RollupsWeekStart => {
+                self.settings_rollups_week_start_draft = self.rollups_week_start;
             }
             SettingsItem::TogglToken => {
                 self.settings_input = self.token.clone().unwrap_or_default();
@@ -1098,6 +1195,23 @@ impl App {
                 self.set_toast(format!("Theme set to {label}."), false);
                 self.settings_edit_item = None;
                 self.settings_focus = SettingsFocus::Items;
+            }
+            SettingsItem::RollupsIncludeWeekends | SettingsItem::RollupsWeekStart => {
+                let next = RollupPreferences {
+                    include_weekends: self.settings_rollups_include_weekends_draft,
+                    week_start: self.settings_rollups_week_start_draft,
+                };
+                if let Err(err) = storage::write_rollup_preferences(next) {
+                    self.status = Some(format!("Failed to save: {err}"));
+                    return;
+                }
+                self.rollups_include_weekends = next.include_weekends;
+                self.rollups_week_start = next.week_start;
+                self.status = Some("Rollup defaults updated.".to_string());
+                self.set_toast("Rollup defaults saved.", false);
+                self.settings_edit_item = None;
+                self.settings_focus = SettingsFocus::Items;
+                self.rebuild_rollups();
             }
             SettingsItem::TargetHours => {
                 let parsed = match self.parse_target_hours() {
@@ -1214,6 +1328,16 @@ impl App {
             }
         };
         self.settings_theme_draft = values[next_index];
+    }
+
+    fn cycle_rollup_week_start(&mut self, up: bool) {
+        self.settings_rollups_week_start_draft = match (self.settings_rollups_week_start_draft, up)
+        {
+            (WeekStart::Monday, true) => WeekStart::Sunday,
+            (WeekStart::Sunday, true) => WeekStart::Monday,
+            (WeekStart::Monday, false) => WeekStart::Sunday,
+            (WeekStart::Sunday, false) => WeekStart::Monday,
+        };
     }
 
     fn cycle_rounding_increment(&mut self, up: bool) {
@@ -1385,6 +1509,26 @@ impl App {
         }
     }
 
+    pub fn settings_rollups_include_weekends_display(&self) -> bool {
+        if self.settings_focus == SettingsFocus::Edit
+            && self.settings_edit_item == Some(SettingsItem::RollupsIncludeWeekends)
+        {
+            self.settings_rollups_include_weekends_draft
+        } else {
+            self.rollups_include_weekends
+        }
+    }
+
+    pub fn settings_rollups_week_start_display(&self) -> WeekStart {
+        if self.settings_focus == SettingsFocus::Edit
+            && self.settings_edit_item == Some(SettingsItem::RollupsWeekStart)
+        {
+            self.settings_rollups_week_start_draft
+        } else {
+            self.rollups_week_start
+        }
+    }
+
     fn select_previous_project(&mut self) {
         if self.grouped.is_empty() {
             return;
@@ -1477,6 +1621,95 @@ impl App {
         self.sync_entry_selection_for_project();
     }
 
+    fn rebuild_rollups(&mut self) {
+        let (rollup_start, rollup_end) = self.rollup_bounds();
+        let Some(workspace_id) = self.selected_workspace.as_ref().map(|workspace| workspace.id) else {
+            self.rollups = build_rollups(
+                &self.time_entries,
+                rollup_start,
+                rollup_end,
+                self.rounding.as_ref(),
+                self.rollups_week_start,
+            );
+            self.align_rollup_selection_to_active_range();
+            self.align_rollup_day_selection_to_active_range();
+            self.ensure_rollup_selections();
+            return;
+        };
+
+        let mut entries_by_id: HashMap<u64, TimeEntry> = HashMap::new();
+        for entry in self.collect_cached_entries_for_range(workspace_id, rollup_start, rollup_end) {
+            if entry.stop.is_some() {
+                entries_by_id.insert(entry.id, entry);
+            }
+        }
+        for entry in &self.time_entries {
+            if entry.stop.is_some() {
+                entries_by_id.insert(entry.id, entry.clone());
+            }
+        }
+
+        let mut rollup_entries: Vec<TimeEntry> = entries_by_id.into_values().collect();
+        rollup_entries.sort_by(|left, right| left.start.cmp(&right.start).then(left.id.cmp(&right.id)));
+
+        self.rollups = build_rollups(
+            &rollup_entries,
+            rollup_start,
+            rollup_end,
+            self.rounding.as_ref(),
+            self.rollups_week_start,
+        );
+        self.align_rollup_selection_to_active_range();
+        self.align_rollup_day_selection_to_active_range();
+        self.ensure_rollup_selections();
+    }
+
+    fn rollup_bounds(&self) -> (NaiveDate, NaiveDate) {
+        let start = self.date_range.start_date();
+        let end = self.date_range.end_date();
+        (month_start(start), month_end(end))
+    }
+
+    fn align_rollup_selection_to_active_range(&mut self) {
+        let target_day = self.date_range.end_date();
+
+        if let Some(index) = self
+            .rollups
+            .weekly
+            .iter()
+            .position(|period| period.start <= target_day && period.end >= target_day)
+        {
+            self.rollup_week_state.select(Some(index));
+        }
+
+        if let Some(index) = self
+            .rollups
+            .monthly
+            .iter()
+            .position(|period| period.start <= target_day && period.end >= target_day)
+        {
+            self.rollup_month_state.select(Some(index));
+        }
+    }
+
+    fn align_rollup_day_selection_to_active_range(&mut self) {
+        let target_day = self.date_range.end_date();
+        let daily = self.rollup_daily_for_selected_period();
+        if daily.is_empty() {
+            self.rollup_day_state.select(None);
+            return;
+        }
+        if let Some(index) = daily.iter().position(|day| day.date == target_day) {
+            self.rollup_day_state.select(Some(index));
+            return;
+        }
+        let fallback = daily
+            .iter()
+            .rposition(|day| day.date <= target_day)
+            .unwrap_or(0);
+        self.rollup_day_state.select(Some(fallback));
+    }
+
     fn exit_entries_focus(&mut self) {
         self.dashboard_focus = DashboardFocus::Projects;
     }
@@ -1525,15 +1758,158 @@ impl App {
         self.ensure_rollup_selections();
     }
 
-    fn set_rollup_focus(&mut self, focus: RollupFocus) {
-        self.rollup_focus = focus;
-    }
-
     fn toggle_rollup_focus(&mut self) {
         self.rollup_focus = match self.rollup_focus {
             RollupFocus::Periods => RollupFocus::Days,
             RollupFocus::Days => RollupFocus::Periods,
         };
+    }
+
+    fn toggle_rollup_weekends(&mut self) {
+        self.rollups_include_weekends = !self.rollups_include_weekends;
+        self.align_rollup_day_selection_to_active_range();
+        self.ensure_rollup_day_selection();
+        if self.rollups_include_weekends {
+            self.status = Some("Rollups: weekends included.".to_string());
+        } else {
+            self.status = Some("Rollups: weekends excluded.".to_string());
+        }
+    }
+
+    fn open_rollup_refetch_confirm(&mut self) {
+        let Some(plan) = self.selected_rollup_refetch_plan() else {
+            self.status = Some("Select a rollup period/day first.".to_string());
+            self.set_toast("Select a rollup period/day first.", true);
+            return;
+        };
+        self.refetch_plan = Some(plan);
+        self.mode = Mode::RefetchConfirm;
+    }
+
+    fn selected_rollup_refetch_plan(&self) -> Option<RefetchPlan> {
+        if self.rollup_focus == RollupFocus::Days {
+            let daily = self.rollup_daily_for_selected_period();
+            if let Some(index) = self.rollup_day_state.selected() {
+                if let Some(day) = daily.get(index) {
+                    return Some(RefetchPlan {
+                        start: day.date,
+                        end: day.date,
+                        scope_label: format!("Day {}", day.date.format("%Y-%m-%d")),
+                    });
+                }
+            }
+        }
+
+        let period = self.rollup_selected_period()?;
+        let scope = match self.rollup_view {
+            RollupView::Weekly => "Week",
+            RollupView::Monthly => "Month",
+        };
+        Some(RefetchPlan {
+            start: period.start,
+            end: period.end,
+            scope_label: format!("{scope} {}", period.label),
+        })
+    }
+
+    fn execute_rollup_refetch(&mut self) {
+        let Some(plan) = self.refetch_plan.clone() else {
+            self.mode = Mode::Rollups;
+            return;
+        };
+
+        let token = match self.token.clone() {
+            Some(token) => token,
+            None => {
+                self.refetch_plan = None;
+                self.mode = Mode::Login;
+                return;
+            }
+        };
+        let workspace_id = match self.selected_workspace.as_ref().map(|workspace| workspace.id) {
+            Some(id) => id,
+            None => {
+                self.refetch_plan = None;
+                self.mode = Mode::WorkspaceSelect;
+                return;
+            }
+        };
+
+        self.ensure_quota_today();
+        let client = TogglClient::new(token);
+        let dates = date_span(plan.start, plan.end);
+        let total_days = dates.len();
+        let mut fetched_days: Vec<NaiveDate> = Vec::new();
+        let mut stop_reason: Option<String> = None;
+
+        for (index, day) in dates.iter().enumerate() {
+            if self.quota_remaining() == 0 {
+                stop_reason = Some("local quota reached".to_string());
+                if index < total_days {
+                    break;
+                }
+            }
+
+            self.consume_quota();
+            let (start_rfc, end_rfc) = DateRange::from_bounds(*day, *day).as_rfc3339();
+            match client.fetch_time_entries(&start_rfc, &end_rfc) {
+                Ok(entries) => {
+                    self.update_cache_time_entries(workspace_id, &start_rfc, &end_rfc, &entries);
+                    fetched_days.push(*day);
+                }
+                Err(TogglError::Unauthorized) => {
+                    self.refetch_plan = None;
+                    self.handle_error(TogglError::Unauthorized);
+                    return;
+                }
+                Err(TogglError::PaymentRequired) => {
+                    stop_reason = Some("Toggl returned 402 Payment Required".to_string());
+                    break;
+                }
+                Err(TogglError::RateLimited) => {
+                    stop_reason = Some("Toggl rate limit reached".to_string());
+                    break;
+                }
+                Err(TogglError::ServerError(message)) | Err(TogglError::Network(message)) => {
+                    stop_reason = Some(message);
+                    break;
+                }
+            }
+        }
+
+        self.refetch_plan = None;
+        self.mode = Mode::Loading;
+        self.refresh_resume_mode = Some(Mode::Rollups);
+        self.refresh_intent = RefreshIntent::CacheOnly;
+        self.needs_refresh = true;
+
+        if fetched_days.len() == total_days {
+            let message = format!("Refetched {} day(s) for {}.", total_days, plan.scope_label);
+            self.status = Some(message.clone());
+            self.set_toast(message, false);
+            return;
+        }
+
+        let skipped_days = if fetched_days.len() < total_days {
+            dates
+                .iter()
+                .skip(fetched_days.len())
+                .copied()
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        let reason = stop_reason.unwrap_or_else(|| "fetch interrupted".to_string());
+        let message = format!(
+            "Partial refetch {}/{} day(s). Cached: {}. Stopped: {}. Skipped: {}.",
+            fetched_days.len(),
+            total_days,
+            format_day_spans(&fetched_days),
+            reason,
+            format_day_spans(&skipped_days)
+        );
+        self.status = Some(message.clone());
+        self.set_toast(message, true);
     }
 
     fn rollup_periods(&self) -> &[PeriodRollup] {
@@ -1576,7 +1952,11 @@ impl App {
         self.rollups
             .daily
             .iter()
-            .filter(|day| day.date >= period.start && day.date <= period.end)
+            .filter(|day| {
+                day.date >= period.start
+                    && day.date <= period.end
+                    && self.is_rollup_day_included(day.date)
+            })
             .collect()
     }
 
@@ -1592,10 +1972,7 @@ impl App {
     }
 
     fn ensure_rollup_day_selection(&mut self) {
-        let count = self
-            .rollup_selected_period()
-            .map(|period| period.days)
-            .unwrap_or(0);
+        let count = self.rollup_days_len();
         if count == 0 {
             self.rollup_day_state.select(None);
             return;
@@ -1611,10 +1988,7 @@ impl App {
     }
 
     fn reset_rollup_day_selection(&mut self) {
-        let count = self
-            .rollup_selected_period()
-            .map(|period| period.days)
-            .unwrap_or(0);
+        let count = self.rollup_days_len();
         if count == 0 {
             self.rollup_day_state.select(None);
         } else {
@@ -1647,9 +2021,19 @@ impl App {
     }
 
     fn rollup_days_len(&self) -> usize {
-        self.rollup_selected_period()
-            .map(|period| period.days)
-            .unwrap_or(0)
+        self.rollup_daily_for_selected_period().len()
+    }
+
+    fn rollup_vertical_step(&self) -> usize {
+        if self.rollups_include_weekends { 7 } else { 5 }
+    }
+
+    fn is_rollup_day_included(&self, day: NaiveDate) -> bool {
+        if self.rollups_include_weekends {
+            true
+        } else {
+            day.weekday().number_from_monday() <= 5
+        }
     }
 
     fn select_previous_rollup_day(&mut self) {
@@ -1667,6 +2051,25 @@ impl App {
         self.rollup_day_state.select(Some(new_index));
     }
 
+    fn select_previous_rollup_day_by(&mut self, step: usize) {
+        let count = self.rollup_days_len();
+        if count == 0 {
+            self.rollup_day_state.select(None);
+            return;
+        }
+        let step = step % count;
+        if step == 0 {
+            return;
+        }
+        let selected = self.rollup_day_state.selected().unwrap_or(0);
+        let new_index = if selected >= step {
+            selected - step
+        } else {
+            count + selected - step
+        };
+        self.rollup_day_state.select(Some(new_index));
+    }
+
     fn select_next_rollup_day(&mut self) {
         let count = self.rollup_days_len();
         if count == 0 {
@@ -1679,6 +2082,21 @@ impl App {
         } else {
             selected + 1
         };
+        self.rollup_day_state.select(Some(new_index));
+    }
+
+    fn select_next_rollup_day_by(&mut self, step: usize) {
+        let count = self.rollup_days_len();
+        if count == 0 {
+            self.rollup_day_state.select(None);
+            return;
+        }
+        let step = step % count;
+        if step == 0 {
+            return;
+        }
+        let selected = self.rollup_day_state.selected().unwrap_or(0);
+        let new_index = (selected + step) % count;
         self.rollup_day_state.select(Some(new_index));
     }
 
@@ -2034,6 +2452,106 @@ impl App {
             .and_then(|cache| cache.time_entries.get(&key).cloned())
     }
 
+    fn cached_time_entries_for_range(
+        &self,
+        workspace_id: u64,
+        start: &str,
+        end: &str,
+    ) -> Option<CachedData<Vec<TimeEntry>>> {
+        if let Some(cached) = self.cached_time_entries(workspace_id, start, end) {
+            return Some(cached);
+        }
+
+        let start_date = parse_rfc3339_date(start)?;
+        let end_date = parse_rfc3339_date(end)?;
+        let cache = self.cache.as_ref()?;
+
+        let mut entries_by_id: HashMap<u64, TimeEntry> = HashMap::new();
+        let mut latest_cached_at: Option<DateTime<Local>> = None;
+        let mut latest_cached_raw: Option<String> = None;
+
+        for (key, cached) in &cache.time_entries {
+            let Some((cached_workspace, cached_start, cached_end)) = parse_cache_key_bounds(key)
+            else {
+                continue;
+            };
+            if cached_workspace != workspace_id || cached_end < start_date || cached_start > end_date
+            {
+                continue;
+            }
+
+            for entry in &cached.data {
+                let Some(entry_date) = parse_entry_date(entry) else {
+                    continue;
+                };
+                if entry_date >= start_date && entry_date <= end_date {
+                    entries_by_id.insert(entry.id, entry.clone());
+                }
+            }
+
+            if let Some(cached_at) = parse_cached_time(&cached.fetched_at) {
+                match latest_cached_at {
+                    Some(current) if cached_at <= current => {}
+                    _ => {
+                        latest_cached_at = Some(cached_at);
+                    }
+                }
+            } else {
+                latest_cached_raw = Some(cached.fetched_at.clone());
+            }
+        }
+
+        if entries_by_id.is_empty() {
+            return None;
+        }
+
+        let mut entries: Vec<TimeEntry> = entries_by_id.into_values().collect();
+        entries.sort_by(|left, right| left.start.cmp(&right.start).then(left.id.cmp(&right.id)));
+
+        let fetched_at = latest_cached_at
+            .map(|dt| dt.to_rfc3339())
+            .or(latest_cached_raw)
+            .unwrap_or_else(storage::now_rfc3339);
+
+        Some(CachedData {
+            data: entries,
+            fetched_at,
+        })
+    }
+
+    fn collect_cached_entries_for_range(
+        &self,
+        workspace_id: u64,
+        start: NaiveDate,
+        end: NaiveDate,
+    ) -> Vec<TimeEntry> {
+        let Some(cache) = self.cache.as_ref() else {
+            return Vec::new();
+        };
+
+        let mut entries = Vec::new();
+        for (key, cached) in &cache.time_entries {
+            let Some((cached_workspace, cached_start, cached_end)) = parse_cache_key_bounds(key)
+            else {
+                continue;
+            };
+            if cached_workspace != workspace_id || cached_end < start || cached_start > end {
+                continue;
+            }
+
+            for entry in &cached.data {
+                let Some(entry_date) = parse_entry_date(entry) else {
+                    continue;
+                };
+                if entry_date >= start && entry_date <= end {
+                    entries.push(entry.clone());
+                }
+            }
+        }
+
+        entries
+    }
+
     fn update_cache_workspaces(&mut self, workspaces: &[Workspace]) {
         let cached = CachedData {
             data: workspaces.to_vec(),
@@ -2242,7 +2760,7 @@ impl App {
             *cache_reason = Some(CacheReason::CacheOnly);
         }
 
-        if let Some(cached) = self.cached_time_entries(workspace_id, start, end) {
+        if let Some(cached) = self.cached_time_entries_for_range(workspace_id, start, end) {
             *cache_timestamp = Some(cached.fetched_at.clone());
             return Some(cached.data);
         }
@@ -2295,6 +2813,94 @@ fn parse_cached_time(value: &str) -> Option<DateTime<Local>> {
         .map(|dt| dt.with_timezone(&Local))
 }
 
+fn parse_rfc3339_date(value: &str) -> Option<NaiveDate> {
+    DateTime::parse_from_rfc3339(value)
+        .ok()
+        .map(|dt| dt.with_timezone(&Local).date_naive())
+}
+
+fn parse_entry_date(entry: &TimeEntry) -> Option<NaiveDate> {
+    parse_rfc3339_date(&entry.start)
+}
+
+fn parse_cache_key_bounds(key: &str) -> Option<(u64, NaiveDate, NaiveDate)> {
+    let mut parts = key.splitn(3, '|');
+    let workspace_id = parts.next()?.parse::<u64>().ok()?;
+    let start = parse_rfc3339_date(parts.next()?)?;
+    let end = parse_rfc3339_date(parts.next()?)?;
+    Some((workspace_id, start, end))
+}
+
+fn month_start(date: NaiveDate) -> NaiveDate {
+    date.with_day(1).unwrap_or(date)
+}
+
+fn month_end(date: NaiveDate) -> NaiveDate {
+    let (year, month) = if date.month() == 12 {
+        (date.year() + 1, 1)
+    } else {
+        (date.year(), date.month() + 1)
+    };
+    NaiveDate::from_ymd_opt(year, month, 1)
+        .and_then(|next| next.pred_opt())
+        .unwrap_or(date)
+}
+
+fn days_between(start: NaiveDate, end: NaiveDate) -> usize {
+    if end < start {
+        0
+    } else {
+        (end - start).num_days() as usize + 1
+    }
+}
+
+fn date_span(start: NaiveDate, end: NaiveDate) -> Vec<NaiveDate> {
+    let mut days = Vec::new();
+    let mut current = start;
+    while current <= end {
+        days.push(current);
+        current = current.succ_opt().unwrap_or(current + chrono::Duration::days(1));
+    }
+    days
+}
+
+fn format_day_spans(days: &[NaiveDate]) -> String {
+    if days.is_empty() {
+        return "none".to_string();
+    }
+
+    let mut sorted = days.to_vec();
+    sorted.sort_unstable();
+    sorted.dedup();
+
+    let mut spans: Vec<String> = Vec::new();
+    let mut range_start = sorted[0];
+    let mut range_end = sorted[0];
+
+    for day in sorted.iter().skip(1).copied() {
+        let expected_next = range_end
+            .succ_opt()
+            .unwrap_or(range_end + chrono::Duration::days(1));
+        if day == expected_next {
+            range_end = day;
+            continue;
+        }
+        spans.push(format_date_span(range_start, range_end));
+        range_start = day;
+        range_end = day;
+    }
+    spans.push(format_date_span(range_start, range_end));
+    spans.join(", ")
+}
+
+fn format_date_span(start: NaiveDate, end: NaiveDate) -> String {
+    if start == end {
+        start.format("%Y-%m-%d").to_string()
+    } else {
+        format!("{}→{}", start.format("%Y-%m-%d"), end.format("%Y-%m-%d"))
+    }
+}
+
 fn theme_label(theme: ThemePreference) -> &'static str {
     match theme {
         ThemePreference::Terminal => "Terminal",
@@ -2312,4 +2918,13 @@ struct Toast {
 pub struct ToastView {
     pub message: String,
     pub is_error: bool,
+}
+
+pub struct RefetchPlanView {
+    pub scope_label: String,
+    pub start: String,
+    pub end: String,
+    pub days: usize,
+    pub estimated_calls: u32,
+    pub remaining_calls: u32,
 }

@@ -8,6 +8,7 @@ use std::io;
 use std::path::PathBuf;
 
 use crate::models::{Client as TogglClientModel, Project, TimeEntry, Workspace};
+use crate::rollups::WeekStart;
 use crate::rounding::RoundingConfig;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -89,6 +90,25 @@ struct Config {
     target_hours: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     rounding: Option<RoundingConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    rollup_preferences: Option<RollupPreferences>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct RollupPreferences {
+    #[serde(default = "default_rollup_include_weekends")]
+    pub include_weekends: bool,
+    #[serde(default)]
+    pub week_start: WeekStart,
+}
+
+impl Default for RollupPreferences {
+    fn default() -> Self {
+        Self {
+            include_weekends: default_rollup_include_weekends(),
+            week_start: WeekStart::Monday,
+        }
+    }
 }
 
 fn config_path() -> Option<PathBuf> {
@@ -114,6 +134,18 @@ pub fn read_rounding() -> Option<RoundingConfig> {
 pub fn write_rounding(value: Option<RoundingConfig>) -> Result<(), io::Error> {
     let mut config = read_config().unwrap_or_default();
     config.rounding = value;
+    write_config(&config)
+}
+
+pub fn read_rollup_preferences() -> RollupPreferences {
+    read_config()
+        .and_then(|config| config.rollup_preferences)
+        .unwrap_or_default()
+}
+
+pub fn write_rollup_preferences(value: RollupPreferences) -> Result<(), io::Error> {
+    let mut config = read_config().unwrap_or_default();
+    config.rollup_preferences = Some(value);
     write_config(&config)
 }
 
@@ -226,6 +258,10 @@ fn normalize_quota(quota: &mut QuotaFile, today: &str) {
         quota.date = today.to_string();
         quota.used_calls = 0;
     }
+}
+
+const fn default_rollup_include_weekends() -> bool {
+    false
 }
 
 #[cfg(test)]

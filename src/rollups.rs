@@ -1,4 +1,5 @@
 use chrono::{DateTime, Datelike, Duration, Local, NaiveDate};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::models::TimeEntry;
@@ -26,11 +27,20 @@ pub struct Rollups {
     pub monthly: Vec<PeriodRollup>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum WeekStart {
+    #[default]
+    Monday,
+    Sunday,
+}
+
 pub fn build_rollups(
     entries: &[TimeEntry],
     start: NaiveDate,
     end: NaiveDate,
     rounding: Option<&RoundingConfig>,
+    week_start: WeekStart,
 ) -> Rollups {
     let mut totals: HashMap<NaiveDate, i64> = HashMap::new();
 
@@ -48,7 +58,7 @@ pub fn build_rollups(
     }
 
     let daily = build_daily_totals(&totals, start, end);
-    let weekly = build_weekly_rollups(&daily);
+    let weekly = build_weekly_rollups(&daily, week_start);
     let monthly = build_monthly_rollups(&daily);
 
     Rollups {
@@ -83,18 +93,18 @@ fn build_daily_totals(
     daily
 }
 
-fn build_weekly_rollups(daily: &[DailyTotal]) -> Vec<PeriodRollup> {
+fn build_weekly_rollups(daily: &[DailyTotal], week_start: WeekStart) -> Vec<PeriodRollup> {
     let mut rollups = Vec::new();
-    let mut current_key: Option<(i32, u32)> = None;
+    let mut current_key: Option<NaiveDate> = None;
     let mut current_rollup: Option<PeriodRollup> = None;
 
     for day in daily {
-        let week = day.date.iso_week();
-        let key = (week.year(), week.week());
+        let key = start_of_week(day.date, week_start);
         if current_key.map(|value| value != key).unwrap_or(true) {
             if let Some(rollup) = current_rollup.take() {
                 rollups.push(rollup);
             }
+            let week = key.iso_week();
             let label = format!(
                 "W{:02} {} ({} → {})",
                 week.week(),
@@ -116,7 +126,7 @@ fn build_weekly_rollups(daily: &[DailyTotal]) -> Vec<PeriodRollup> {
             rollup.end = day.date;
             rollup.days += 1;
             rollup.seconds += day.seconds;
-            let week = day.date.iso_week();
+            let week = start_of_week(rollup.start, week_start).iso_week();
             rollup.label = format!(
                 "W{:02} {} ({} → {})",
                 week.week(),
@@ -132,6 +142,14 @@ fn build_weekly_rollups(daily: &[DailyTotal]) -> Vec<PeriodRollup> {
     }
 
     rollups
+}
+
+fn start_of_week(date: NaiveDate, week_start: WeekStart) -> NaiveDate {
+    let offset = match week_start {
+        WeekStart::Monday => date.weekday().num_days_from_monday() as i64,
+        WeekStart::Sunday => date.weekday().num_days_from_sunday() as i64,
+    };
+    date - Duration::days(offset)
 }
 
 fn build_monthly_rollups(daily: &[DailyTotal]) -> Vec<PeriodRollup> {
@@ -196,7 +214,7 @@ mod tests {
         let start = NaiveDate::from_ymd_opt(2026, 2, 3).unwrap();
         let end = NaiveDate::from_ymd_opt(2026, 2, 5).unwrap();
 
-        let rollups = build_rollups(&entries, start, end, None);
+        let rollups = build_rollups(&entries, start, end, None, WeekStart::Monday);
 
         assert_eq!(rollups.daily.len(), 3);
         assert_eq!(rollups.daily[0].seconds, 3600);
@@ -221,9 +239,22 @@ mod tests {
             mode: RoundingMode::Closest,
         };
 
-        let rollups = build_rollups(&entries, start, end, Some(&rounding));
+        let rollups = build_rollups(&entries, start, end, Some(&rounding), WeekStart::Monday);
 
         assert_eq!(rollups.daily.len(), 1);
         assert_eq!(rollups.daily[0].seconds, 30 * 60);
+    }
+
+    #[test]
+    fn weekly_rollups_respect_sunday_start() {
+        let entries = vec![entry("2026-02-01T10:00:00Z", 3600)];
+        let start = NaiveDate::from_ymd_opt(2026, 2, 1).unwrap();
+        let end = NaiveDate::from_ymd_opt(2026, 2, 2).unwrap();
+
+        let monday = build_rollups(&entries, start, end, None, WeekStart::Monday);
+        let sunday = build_rollups(&entries, start, end, None, WeekStart::Sunday);
+
+        assert_eq!(monday.weekly.len(), 2);
+        assert_eq!(sunday.weekly.len(), 1);
     }
 }

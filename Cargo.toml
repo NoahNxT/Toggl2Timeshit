@@ -20,9 +20,9 @@ semver = { version = "1.0.25", optional = true }
 flate2 = { version = "1.0.35", optional = true }
 tar = { version = "0.4.41", optional = true }
 tempfile = { version = "3.10.1", optional = true }
-zip = { version = "2.2.0", optional = true }
+zip = { version = "=7.3.0", optional = true }
 [package.metadata.deb]
-maintainer = "NoahNxT <noahnxt@users.noreply.github.com>"
+maintainer = "NoahNxT <noah.gillard@nxt-solutions.com>"
 depends = "libc6 (>= 2.28)"
 section = "utils"
 priority = "optional"
