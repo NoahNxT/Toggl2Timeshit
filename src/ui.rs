@@ -199,7 +199,8 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
             .iter()
             .map(|period| {
                 let hours = hours_from_seconds(period.seconds);
-                let target = app.target_hours * period.days as f64;
+                let (target, _) =
+                    period_target_hours(period, app.target_hours, app.rollups_include_weekends);
                 let delta = normalize_delta(hours - target);
                 let delta_style = delta_style(delta, theme);
                 let line = Line::from(vec![
@@ -258,10 +259,11 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
 
     let summary_lines = if let Some(period) = app.rollup_selected_period() {
         let total_hours = hours_from_seconds(period.seconds);
-        let target_hours = app.target_hours * period.days as f64;
+        let (target_hours, target_days) =
+            period_target_hours(period, app.target_hours, app.rollups_include_weekends);
         let delta = normalize_delta(total_hours - target_hours);
-        let avg = if period.days > 0 {
-            total_hours / period.days as f64
+        let avg = if target_days > 0 {
+            total_hours / target_days as f64
         } else {
             0.0
         };
@@ -273,7 +275,7 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
             Line::from(format!("Total: {:.2}h", total_hours)),
             Line::from(format!(
                 "Target: {:.2}h ({} days × {:.2})",
-                target_hours, period.days, app.target_hours
+                target_hours, target_days, app.target_hours
             )),
             Line::from(vec![
                 Span::raw("Delta: "),
@@ -284,7 +286,9 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
 
         if let Some(day) = selected_day {
             let hours = hours_from_seconds(day.seconds);
-            let day_delta = normalize_delta(hours - app.target_hours);
+            let day_target =
+                target_hours_for_day(day.date, app.target_hours, app.rollups_include_weekends);
+            let day_delta = normalize_delta(hours - day_target);
             let label = day.date.format("%a %Y-%m-%d").to_string();
             lines.push(Line::from(vec![
                 Span::raw(format!("Selected: {label} ")),
@@ -312,6 +316,7 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
             selected_day.map(|day| day.date),
             app.rollup_focus,
             app.target_hours,
+            app.rollups_include_weekends,
             theme,
         )
     } else {
@@ -344,6 +349,11 @@ fn rollups_header_line(app: &App, theme: &Theme) -> Line<'static> {
         RollupView::Weekly => "Weekly",
         RollupView::Monthly => "Monthly",
     };
+    let weekends = if app.rollups_include_weekends {
+        "On"
+    } else {
+        "Off"
+    };
     Line::from(vec![
         Span::styled("Rollups", theme.title_style()),
         Span::raw("  "),
@@ -354,6 +364,10 @@ fn rollups_header_line(app: &App, theme: &Theme) -> Line<'static> {
         Span::styled("View", theme.muted_style()),
         Span::raw(": "),
         Span::styled(view_label, Style::default().add_modifier(Modifier::BOLD)),
+        Span::raw("  "),
+        Span::styled("Weekends", theme.muted_style()),
+        Span::raw(": "),
+        Span::styled(weekends, Style::default().add_modifier(Modifier::BOLD)),
         Span::raw("  "),
         Span::styled("Date", theme.muted_style()),
         Span::raw(": "),
@@ -371,6 +385,8 @@ fn rollups_footer_line(app: &mut App, theme: &Theme) -> Line<'static> {
         Span::styled("w weekly", theme.muted_style()),
         Span::raw(" · "),
         Span::styled("m monthly", theme.muted_style()),
+        Span::raw(" · "),
+        Span::styled("z weekends", theme.muted_style()),
         Span::raw(" · "),
         Span::styled("h help", theme.muted_style()),
         Span::raw(" · "),
@@ -624,12 +640,40 @@ fn delta_style(value: f64, theme: &Theme) -> Style {
     }
 }
 
+fn period_target_hours(
+    period: &PeriodRollup,
+    target_hours: f64,
+    include_weekends: bool,
+) -> (f64, usize) {
+    let mut days = 0usize;
+    let mut total = 0.0;
+    let mut current = period.start;
+    while current <= period.end {
+        let target = target_hours_for_day(current, target_hours, include_weekends);
+        if target > 0.0 {
+            days += 1;
+        }
+        total += target;
+        current = current.succ_opt().unwrap_or(current + Duration::days(1));
+    }
+    (total, days)
+}
+
+fn target_hours_for_day(day: NaiveDate, target_hours: f64, include_weekends: bool) -> f64 {
+    if include_weekends || day.weekday().number_from_monday() <= 5 {
+        target_hours
+    } else {
+        0.0
+    }
+}
+
 fn build_calendar_lines(
     daily: &[&DailyTotal],
     period: &PeriodRollup,
     selected_date: Option<NaiveDate>,
     focus: RollupFocus,
     target_hours: f64,
+    include_weekends: bool,
     theme: &Theme,
 ) -> Vec<Line<'static>> {
     let mut map: HashMap<NaiveDate, i64> = HashMap::new();
@@ -637,9 +681,13 @@ fn build_calendar_lines(
         map.insert(day.date, day.seconds);
     }
 
-    let cell_width = 7;
+    let cell_width = 10;
     let mut lines = Vec::new();
-    let header_labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    let header_labels: Vec<&str> = if include_weekends {
+        vec!["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    } else {
+        vec!["Mon", "Tue", "Wed", "Thu", "Fri"]
+    };
     let mut header_spans = Vec::new();
     for (index, label) in header_labels.iter().enumerate() {
         let text = format!("{:^width$}", label, width = cell_width);
@@ -650,32 +698,42 @@ fn build_calendar_lines(
     }
     lines.push(Line::from(header_spans));
 
+    let column_count = header_labels.len();
     let mut week_cells: Vec<Option<NaiveDate>> = Vec::new();
     let mut current = period.start;
-    let offset = current.weekday().num_days_from_monday() as usize;
+    let offset = if include_weekends {
+        current.weekday().num_days_from_monday() as usize
+    } else {
+        current.weekday().num_days_from_monday().min(5) as usize
+    };
     for _ in 0..offset {
         week_cells.push(None);
     }
 
     while current <= period.end {
-        week_cells.push(Some(current));
-        if week_cells.len() == 7 {
-            lines.push(calendar_week_line(
-                &week_cells,
-                &map,
-                selected_date,
-                focus,
-                target_hours,
-                theme,
-                cell_width,
-            ));
-            week_cells.clear();
+        if include_weekends || current.weekday().number_from_monday() <= 5 {
+            week_cells.push(Some(current));
+            if week_cells.len() == column_count {
+                if week_cells.iter().any(Option::is_some) {
+                    lines.push(calendar_week_line(
+                        &week_cells,
+                        &map,
+                        selected_date,
+                        focus,
+                        target_hours,
+                        include_weekends,
+                        theme,
+                        cell_width,
+                    ));
+                }
+                week_cells.clear();
+            }
         }
         current = current.succ_opt().unwrap_or(current + Duration::days(1));
     }
 
-    if !week_cells.is_empty() {
-        while week_cells.len() < 7 {
+    if !week_cells.is_empty() && week_cells.iter().any(Option::is_some) {
+        while week_cells.len() < column_count {
             week_cells.push(None);
         }
         lines.push(calendar_week_line(
@@ -684,6 +742,7 @@ fn build_calendar_lines(
             selected_date,
             focus,
             target_hours,
+            include_weekends,
             theme,
             cell_width,
         ));
@@ -698,6 +757,7 @@ fn calendar_week_line(
     selected_date: Option<NaiveDate>,
     focus: RollupFocus,
     target_hours: f64,
+    include_weekends: bool,
     theme: &Theme,
     cell_width: usize,
 ) -> Line<'static> {
@@ -707,8 +767,11 @@ fn calendar_week_line(
             Some(date) => {
                 let seconds = *map.get(date).unwrap_or(&0);
                 let hours = hours_from_seconds(seconds);
-                let delta = normalize_delta(hours - target_hours);
-                let label = format!("{:>2} {:>4.1}", date.day(), hours);
+                let delta = normalize_delta(
+                    hours - target_hours_for_day(*date, target_hours, include_weekends),
+                );
+                let label = format!("{:02} | {:>4.1}h", date.day(), hours);
+                let padded_label = format!("{:<width$}", label, width = cell_width);
                 if Some(*date) == selected_date {
                     let highlight = if matches!(focus, RollupFocus::Days) {
                         Style::default()
@@ -720,9 +783,12 @@ fn calendar_week_line(
                             .fg(theme.highlight)
                             .add_modifier(Modifier::BOLD)
                     };
-                    Span::styled(label, highlight)
+                    Span::styled(padded_label, highlight)
                 } else {
-                    Span::styled(label, delta_style(delta, theme))
+                    Span::styled(
+                        padded_label,
+                        delta_style(delta, theme).add_modifier(Modifier::BOLD),
+                    )
                 }
             }
             None => Span::raw(format!("{:width$}", "", width = cell_width)),
@@ -819,6 +885,10 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
         Row::new(vec![
             Cell::from(Span::styled("w / m", key_style)),
             Cell::from("Weekly / monthly view"),
+        ]),
+        Row::new(vec![
+            Cell::from(Span::styled("z", key_style)),
+            Cell::from("Toggle weekends in rollups"),
         ]),
         Row::new(vec![
             Cell::from(Span::styled("Up/Down", key_style)),

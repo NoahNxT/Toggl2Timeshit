@@ -1,4 +1,4 @@
-use chrono::{DateTime, Local};
+use chrono::{DateTime, Datelike, Local, NaiveDate};
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::widgets::ListState;
 use std::collections::{HashMap, HashSet};
@@ -113,6 +113,7 @@ pub struct App {
     pub rollup_week_state: ListState,
     pub rollup_month_state: ListState,
     pub rollup_day_state: ListState,
+    pub rollups_include_weekends: bool,
     pub last_refresh: Option<DateTime<Local>>,
     pub show_help: bool,
     pub theme: ThemePreference,
@@ -203,6 +204,7 @@ impl App {
             rollup_week_state,
             rollup_month_state,
             rollup_day_state,
+            rollups_include_weekends: false,
             last_refresh: None,
             show_help: false,
             theme,
@@ -484,13 +486,7 @@ impl App {
         self.client_names = client_names;
         self.grouped = grouped;
         self.total_hours = total_hours;
-        self.rollups = build_rollups(
-            &self.time_entries,
-            self.date_range.start_date(),
-            self.date_range.end_date(),
-            self.rounding.as_ref(),
-        );
-        self.ensure_rollup_selections();
+        self.rebuild_rollups();
         self.last_refresh = if allow_api && cache_reason.is_none() {
             Some(Local::now())
         } else {
@@ -654,6 +650,7 @@ impl App {
             KeyCode::Char('h') => self.show_help = true,
             KeyCode::Char('w') | KeyCode::Char('W') => self.set_rollup_view(RollupView::Weekly),
             KeyCode::Char('m') | KeyCode::Char('M') => self.set_rollup_view(RollupView::Monthly),
+            KeyCode::Char('z') | KeyCode::Char('Z') => self.toggle_rollup_weekends(),
             KeyCode::Left => self.set_rollup_focus(RollupFocus::Periods),
             KeyCode::Right => self.set_rollup_focus(RollupFocus::Days),
             KeyCode::Tab => self.toggle_rollup_focus(),
@@ -995,13 +992,7 @@ impl App {
 
         self.grouped = grouped;
         self.total_hours = total_hours;
-        self.rollups = build_rollups(
-            &self.time_entries,
-            self.date_range.start_date(),
-            self.date_range.end_date(),
-            self.rounding.as_ref(),
-        );
-        self.ensure_rollup_selections();
+        self.rebuild_rollups();
 
         if let Some((client_name, project_name)) = selected_project_key {
             if let Some(index) = self.grouped.iter().position(|project| {
@@ -1477,6 +1468,73 @@ impl App {
         self.sync_entry_selection_for_project();
     }
 
+    fn rebuild_rollups(&mut self) {
+        let (rollup_start, rollup_end) = self.rollup_bounds();
+        let Some(workspace_id) = self.selected_workspace.as_ref().map(|workspace| workspace.id) else {
+            self.rollups = build_rollups(
+                &self.time_entries,
+                rollup_start,
+                rollup_end,
+                self.rounding.as_ref(),
+            );
+            self.align_rollup_selection_to_active_range();
+            self.ensure_rollup_selections();
+            return;
+        };
+
+        let mut entries_by_id: HashMap<u64, TimeEntry> = HashMap::new();
+        for entry in self.collect_cached_entries_for_range(workspace_id, rollup_start, rollup_end) {
+            if entry.stop.is_some() {
+                entries_by_id.insert(entry.id, entry);
+            }
+        }
+        for entry in &self.time_entries {
+            if entry.stop.is_some() {
+                entries_by_id.insert(entry.id, entry.clone());
+            }
+        }
+
+        let mut rollup_entries: Vec<TimeEntry> = entries_by_id.into_values().collect();
+        rollup_entries.sort_by(|left, right| left.start.cmp(&right.start).then(left.id.cmp(&right.id)));
+
+        self.rollups = build_rollups(
+            &rollup_entries,
+            rollup_start,
+            rollup_end,
+            self.rounding.as_ref(),
+        );
+        self.align_rollup_selection_to_active_range();
+        self.ensure_rollup_selections();
+    }
+
+    fn rollup_bounds(&self) -> (NaiveDate, NaiveDate) {
+        let start = self.date_range.start_date();
+        let end = self.date_range.end_date();
+        (month_start(start), month_end(end))
+    }
+
+    fn align_rollup_selection_to_active_range(&mut self) {
+        let target_day = self.date_range.end_date();
+
+        if let Some(index) = self
+            .rollups
+            .weekly
+            .iter()
+            .position(|period| period.start <= target_day && period.end >= target_day)
+        {
+            self.rollup_week_state.select(Some(index));
+        }
+
+        if let Some(index) = self
+            .rollups
+            .monthly
+            .iter()
+            .position(|period| period.start <= target_day && period.end >= target_day)
+        {
+            self.rollup_month_state.select(Some(index));
+        }
+    }
+
     fn exit_entries_focus(&mut self) {
         self.dashboard_focus = DashboardFocus::Projects;
     }
@@ -1536,6 +1594,16 @@ impl App {
         };
     }
 
+    fn toggle_rollup_weekends(&mut self) {
+        self.rollups_include_weekends = !self.rollups_include_weekends;
+        self.ensure_rollup_day_selection();
+        if self.rollups_include_weekends {
+            self.status = Some("Rollups: weekends included.".to_string());
+        } else {
+            self.status = Some("Rollups: weekends excluded.".to_string());
+        }
+    }
+
     fn rollup_periods(&self) -> &[PeriodRollup] {
         match self.rollup_view {
             RollupView::Weekly => &self.rollups.weekly,
@@ -1576,7 +1644,11 @@ impl App {
         self.rollups
             .daily
             .iter()
-            .filter(|day| day.date >= period.start && day.date <= period.end)
+            .filter(|day| {
+                day.date >= period.start
+                    && day.date <= period.end
+                    && self.is_rollup_day_included(day.date)
+            })
             .collect()
     }
 
@@ -1592,10 +1664,7 @@ impl App {
     }
 
     fn ensure_rollup_day_selection(&mut self) {
-        let count = self
-            .rollup_selected_period()
-            .map(|period| period.days)
-            .unwrap_or(0);
+        let count = self.rollup_days_len();
         if count == 0 {
             self.rollup_day_state.select(None);
             return;
@@ -1611,10 +1680,7 @@ impl App {
     }
 
     fn reset_rollup_day_selection(&mut self) {
-        let count = self
-            .rollup_selected_period()
-            .map(|period| period.days)
-            .unwrap_or(0);
+        let count = self.rollup_days_len();
         if count == 0 {
             self.rollup_day_state.select(None);
         } else {
@@ -1647,9 +1713,15 @@ impl App {
     }
 
     fn rollup_days_len(&self) -> usize {
-        self.rollup_selected_period()
-            .map(|period| period.days)
-            .unwrap_or(0)
+        self.rollup_daily_for_selected_period().len()
+    }
+
+    fn is_rollup_day_included(&self, day: NaiveDate) -> bool {
+        if self.rollups_include_weekends {
+            true
+        } else {
+            day.weekday().number_from_monday() <= 5
+        }
     }
 
     fn select_previous_rollup_day(&mut self) {
@@ -2034,6 +2106,106 @@ impl App {
             .and_then(|cache| cache.time_entries.get(&key).cloned())
     }
 
+    fn cached_time_entries_for_range(
+        &self,
+        workspace_id: u64,
+        start: &str,
+        end: &str,
+    ) -> Option<CachedData<Vec<TimeEntry>>> {
+        if let Some(cached) = self.cached_time_entries(workspace_id, start, end) {
+            return Some(cached);
+        }
+
+        let start_date = parse_rfc3339_date(start)?;
+        let end_date = parse_rfc3339_date(end)?;
+        let cache = self.cache.as_ref()?;
+
+        let mut entries_by_id: HashMap<u64, TimeEntry> = HashMap::new();
+        let mut latest_cached_at: Option<DateTime<Local>> = None;
+        let mut latest_cached_raw: Option<String> = None;
+
+        for (key, cached) in &cache.time_entries {
+            let Some((cached_workspace, cached_start, cached_end)) = parse_cache_key_bounds(key)
+            else {
+                continue;
+            };
+            if cached_workspace != workspace_id || cached_end < start_date || cached_start > end_date
+            {
+                continue;
+            }
+
+            for entry in &cached.data {
+                let Some(entry_date) = parse_entry_date(entry) else {
+                    continue;
+                };
+                if entry_date >= start_date && entry_date <= end_date {
+                    entries_by_id.insert(entry.id, entry.clone());
+                }
+            }
+
+            if let Some(cached_at) = parse_cached_time(&cached.fetched_at) {
+                match latest_cached_at {
+                    Some(current) if cached_at <= current => {}
+                    _ => {
+                        latest_cached_at = Some(cached_at);
+                    }
+                }
+            } else {
+                latest_cached_raw = Some(cached.fetched_at.clone());
+            }
+        }
+
+        if entries_by_id.is_empty() {
+            return None;
+        }
+
+        let mut entries: Vec<TimeEntry> = entries_by_id.into_values().collect();
+        entries.sort_by(|left, right| left.start.cmp(&right.start).then(left.id.cmp(&right.id)));
+
+        let fetched_at = latest_cached_at
+            .map(|dt| dt.to_rfc3339())
+            .or(latest_cached_raw)
+            .unwrap_or_else(storage::now_rfc3339);
+
+        Some(CachedData {
+            data: entries,
+            fetched_at,
+        })
+    }
+
+    fn collect_cached_entries_for_range(
+        &self,
+        workspace_id: u64,
+        start: NaiveDate,
+        end: NaiveDate,
+    ) -> Vec<TimeEntry> {
+        let Some(cache) = self.cache.as_ref() else {
+            return Vec::new();
+        };
+
+        let mut entries = Vec::new();
+        for (key, cached) in &cache.time_entries {
+            let Some((cached_workspace, cached_start, cached_end)) = parse_cache_key_bounds(key)
+            else {
+                continue;
+            };
+            if cached_workspace != workspace_id || cached_end < start || cached_start > end {
+                continue;
+            }
+
+            for entry in &cached.data {
+                let Some(entry_date) = parse_entry_date(entry) else {
+                    continue;
+                };
+                if entry_date >= start && entry_date <= end {
+                    entries.push(entry.clone());
+                }
+            }
+        }
+
+        entries
+    }
+
     fn update_cache_workspaces(&mut self, workspaces: &[Workspace]) {
         let cached = CachedData {
             data: workspaces.to_vec(),
@@ -2242,7 +2414,7 @@ impl App {
             *cache_reason = Some(CacheReason::CacheOnly);
         }
 
-        if let Some(cached) = self.cached_time_entries(workspace_id, start, end) {
+        if let Some(cached) = self.cached_time_entries_for_range(workspace_id, start, end) {
             *cache_timestamp = Some(cached.fetched_at.clone());
             return Some(cached.data);
         }
@@ -2293,6 +2465,39 @@ fn parse_cached_time(value: &str) -> Option<DateTime<Local>> {
     DateTime::parse_from_rfc3339(value)
         .ok()
         .map(|dt| dt.with_timezone(&Local))
+}
+
+fn parse_rfc3339_date(value: &str) -> Option<NaiveDate> {
+    DateTime::parse_from_rfc3339(value)
+        .ok()
+        .map(|dt| dt.with_timezone(&Local).date_naive())
+}
+
+fn parse_entry_date(entry: &TimeEntry) -> Option<NaiveDate> {
+    parse_rfc3339_date(&entry.start)
+}
+
+fn parse_cache_key_bounds(key: &str) -> Option<(u64, NaiveDate, NaiveDate)> {
+    let mut parts = key.splitn(3, '|');
+    let workspace_id = parts.next()?.parse::<u64>().ok()?;
+    let start = parse_rfc3339_date(parts.next()?)?;
+    let end = parse_rfc3339_date(parts.next()?)?;
+    Some((workspace_id, start, end))
+}
+
+fn month_start(date: NaiveDate) -> NaiveDate {
+    date.with_day(1).unwrap_or(date)
+}
+
+fn month_end(date: NaiveDate) -> NaiveDate {
+    let (year, month) = if date.month() == 12 {
+        (date.year() + 1, 1)
+    } else {
+        (date.year(), date.month() + 1)
+    };
+    NaiveDate::from_ymd_opt(year, month, 1)
+        .and_then(|next| next.pred_opt())
+        .unwrap_or(date)
 }
 
 fn theme_label(theme: ThemePreference) -> &'static str {
