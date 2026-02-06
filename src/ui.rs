@@ -1,4 +1,4 @@
-use chrono::{Datelike, Duration, NaiveDate};
+use chrono::{Datelike, Duration, Local, NaiveDate};
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Margin, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -311,8 +311,8 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
         .wrap(Wrap { trim: true });
     frame.render_widget(summary, right_sections[0]);
 
-    let calendar_lines = if let Some(period) = app.rollup_selected_period() {
-        build_calendar_lines(
+    if let Some(period) = app.rollup_selected_period() {
+        let calendar_lines = build_calendar_grid_lines(
             &daily,
             period,
             selected_day.map(|day| day.date),
@@ -321,16 +321,19 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
             app.rollups_include_weekends,
             app.rollups_week_start,
             theme,
-        )
+        );
+        let calendar = Paragraph::new(calendar_lines)
+            .alignment(Alignment::Left)
+            .block(panel_block("Calendar", theme))
+            .wrap(Wrap { trim: false });
+        frame.render_widget(calendar, right_sections[1]);
     } else {
-        vec![Line::from("No days")]
-    };
-
-    let calendar = Paragraph::new(calendar_lines)
-        .alignment(Alignment::Left)
-        .block(panel_block("Calendar", theme))
-        .wrap(Wrap { trim: false });
-    frame.render_widget(calendar, right_sections[1]);
+        let empty = Paragraph::new(vec![Line::from("No days")])
+            .alignment(Alignment::Left)
+            .block(panel_block("Calendar", theme))
+            .wrap(Wrap { trim: false });
+        frame.render_widget(empty, right_sections[1]);
+    }
 
     let footer = rollups_footer_line(app, theme);
     let footer_block = Paragraph::new(footer).alignment(Alignment::Left).block(
@@ -738,7 +741,7 @@ fn target_hours_for_day(day: NaiveDate, target_hours: f64, include_weekends: boo
     }
 }
 
-fn build_calendar_lines(
+fn build_calendar_grid_lines(
     daily: &[&DailyTotal],
     period: &PeriodRollup,
     selected_date: Option<NaiveDate>,
@@ -753,8 +756,6 @@ fn build_calendar_lines(
         map.insert(day.date, day.seconds);
     }
 
-    let cell_width = 10;
-    let mut lines = Vec::new();
     let header_labels: Vec<&str> = if include_weekends {
         match week_start {
             WeekStart::Monday => vec!["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
@@ -763,18 +764,10 @@ fn build_calendar_lines(
     } else {
         vec!["Mon", "Tue", "Wed", "Thu", "Fri"]
     };
-    let mut header_spans = Vec::new();
-    for (index, label) in header_labels.iter().enumerate() {
-        let text = format!("{:^width$}", label, width = cell_width);
-        header_spans.push(Span::styled(text, theme.muted_style()));
-        if index < header_labels.len() - 1 {
-            header_spans.push(Span::raw(" "));
-        }
-    }
-    lines.push(Line::from(header_spans));
-
     let column_count = header_labels.len();
+    let cell_width = 10usize;
     let mut week_cells: Vec<Option<NaiveDate>> = Vec::new();
+    let mut week_rows: Vec<Vec<Option<NaiveDate>>> = Vec::new();
     let mut current = period.start;
     let offset = if include_weekends {
         match week_start {
@@ -796,16 +789,7 @@ fn build_calendar_lines(
             week_cells.push(Some(current));
             if week_cells.len() == column_count {
                 if week_cells.iter().any(Option::is_some) {
-                    lines.push(calendar_week_line(
-                        &week_cells,
-                        &map,
-                        selected_date,
-                        focus,
-                        target_hours,
-                        include_weekends,
-                        theme,
-                        cell_width,
-                    ));
+                    week_rows.push(week_cells.clone());
                 }
                 week_cells.clear();
             }
@@ -817,72 +801,105 @@ fn build_calendar_lines(
         while week_cells.len() < column_count {
             week_cells.push(None);
         }
-        lines.push(calendar_week_line(
-            &week_cells,
-            &map,
-            selected_date,
-            focus,
-            target_hours,
-            include_weekends,
-            theme,
-            cell_width,
-        ));
+        week_rows.push(week_cells);
     }
 
-    lines
-}
+    if week_rows.is_empty() {
+        return vec![Line::from("No days")];
+    }
 
-fn calendar_week_line(
-    week_cells: &[Option<NaiveDate>],
-    map: &HashMap<NaiveDate, i64>,
-    selected_date: Option<NaiveDate>,
-    focus: RollupFocus,
-    target_hours: f64,
-    include_weekends: bool,
-    theme: &Theme,
-    cell_width: usize,
-) -> Line<'static> {
-    let mut spans = Vec::new();
-    for (index, cell) in week_cells.iter().enumerate() {
-        let span = match cell {
-            Some(date) => {
-                let seconds = *map.get(date).unwrap_or(&0);
-                let hours = hours_from_seconds(seconds);
-                let delta = normalize_delta(
-                    hours - target_hours_for_day(*date, target_hours, include_weekends),
-                );
-                let label = format!("{:02} | {:>4.1}h", date.day(), hours);
-                let padded_label = format!("{:<width$}", label, width = cell_width);
-                if Some(*date) == selected_date {
-                    if matches!(focus, RollupFocus::Days) {
-                        Span::styled(
-                            padded_label,
-                            Style::default()
-                                .bg(theme.accent)
-                                .fg(theme.text)
-                                .add_modifier(Modifier::BOLD),
-                        )
-                    } else {
-                        Span::styled(
-                            padded_label,
-                            delta_style(delta, theme).add_modifier(Modifier::BOLD),
-                        )
+    let border_style = theme.border_style();
+    let today = Local::now().date_naive();
+    let horizontal = "─".repeat(cell_width);
+    let mut lines = Vec::new();
+
+    let build_border =
+        |left: &'static str, join: &'static str, right: &'static str| -> Line<'static> {
+        let mut spans = Vec::new();
+        spans.push(Span::styled(left, border_style));
+        for column in 0..column_count {
+            spans.push(Span::styled(horizontal.clone(), border_style));
+            if column + 1 < column_count {
+                spans.push(Span::styled(join, border_style));
+            }
+        }
+        spans.push(Span::styled(right, border_style));
+        Line::from(spans)
+    };
+
+    let build_text_row = |values: Vec<(String, Style)>| -> Line<'static> {
+        let mut spans = Vec::new();
+        spans.push(Span::styled("│", border_style));
+        for (index, (value, style)) in values.into_iter().enumerate() {
+            spans.push(Span::styled(value, style));
+            if index + 1 < column_count {
+                spans.push(Span::styled("│", border_style));
+            }
+        }
+        spans.push(Span::styled("│", border_style));
+        Line::from(spans)
+    };
+
+    lines.push(build_border("┌", "┬", "┐"));
+    let header_values = header_labels
+        .iter()
+        .map(|label| {
+            (
+                format!("{:^width$}", label, width = cell_width),
+                theme.muted_style().add_modifier(Modifier::BOLD),
+            )
+        })
+        .collect::<Vec<_>>();
+    lines.push(build_text_row(header_values));
+    lines.push(build_border("├", "┼", "┤"));
+
+    for (week_index, week) in week_rows.iter().enumerate() {
+        let mut day_values = Vec::new();
+        let mut hour_values = Vec::new();
+        for cell in week {
+            match cell {
+                Some(date) => {
+                    let seconds = *map.get(date).unwrap_or(&0);
+                    let hours = hours_from_seconds(seconds);
+                    let delta = normalize_delta(
+                        hours - target_hours_for_day(*date, target_hours, include_weekends),
+                    );
+                    let mut style = delta_style(delta, theme).add_modifier(Modifier::BOLD);
+                    if *date == today {
+                        style = style.fg(Color::Yellow).add_modifier(Modifier::BOLD);
                     }
-                } else {
-                    Span::styled(
-                        padded_label,
-                        delta_style(delta, theme).add_modifier(Modifier::BOLD),
-                    )
+                    if Some(*date) == selected_date {
+                        if matches!(focus, RollupFocus::Days) {
+                            style = style.bg(theme.accent);
+                            if *date == today {
+                                style = style.fg(Color::Yellow).add_modifier(Modifier::BOLD);
+                            } else {
+                                style = style.fg(theme.text).add_modifier(Modifier::BOLD);
+                            }
+                        }
+                    }
+                    if *date == today {
+                        style = style.add_modifier(Modifier::UNDERLINED);
+                    }
+                    day_values.push((format!("{:^width$}", format!("{:02}", date.day()), width = cell_width), style));
+                    hour_values.push((format!("{:^width$}", format!("{:.2}h", hours), width = cell_width), style));
+                }
+                None => {
+                    day_values.push((format!("{:width$}", "", width = cell_width), theme.muted_style()));
+                    hour_values.push((format!("{:width$}", "", width = cell_width), theme.muted_style()));
                 }
             }
-            None => Span::raw(format!("{:width$}", "", width = cell_width)),
-        };
-        spans.push(span);
-        if index < week_cells.len() - 1 {
-            spans.push(Span::raw(" "));
+        }
+
+        lines.push(build_text_row(day_values));
+        lines.push(build_text_row(hour_values));
+        if week_index + 1 < week_rows.len() {
+            lines.push(build_border("├", "┼", "┤"));
+        } else {
+            lines.push(build_border("└", "┴", "┘"));
         }
     }
-    Line::from(spans)
+    lines
 }
 
 fn draw_help(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
