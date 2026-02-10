@@ -232,7 +232,10 @@ mod enabled {
             "windows" => vec!["timeshit.exe"],
             other => return Err(UpdateError::Unsupported(format!("Unsupported OS: {other}"))),
         };
-        Ok(binaries.into_iter().map(|value| value.to_string()).collect())
+        Ok(binaries
+            .into_iter()
+            .map(|value| value.to_string())
+            .collect())
     }
 
     fn is_managed_install() -> bool {

@@ -9,9 +9,7 @@ use crate::grouping::{GroupedEntry, GroupedProject, group_entries};
 use crate::models::{Client as TogglClientModel, Project, TimeEntry, Workspace};
 use crate::rollups::{DailyTotal, PeriodRollup, Rollups, WeekStart, build_rollups};
 use crate::rounding::{RoundingConfig, RoundingMode};
-use crate::storage::{
-    self, CacheFile, CachedData, QuotaFile, RollupPreferences, ThemePreference,
-};
+use crate::storage::{self, CacheFile, CachedData, QuotaFile, RollupPreferences, ThemePreference};
 use crate::toggl::{TogglClient, TogglError};
 use crate::update::{self, UpdateInfo};
 use arboard::Clipboard;
@@ -42,6 +40,7 @@ pub enum DashboardFocus {
 pub enum RollupView {
     Weekly,
     Monthly,
+    Yearly,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,6 +123,7 @@ pub struct App {
     pub rollup_focus: RollupFocus,
     pub rollup_week_state: ListState,
     pub rollup_month_state: ListState,
+    pub rollup_year_state: ListState,
     pub rollup_day_state: ListState,
     pub rollups_include_weekends: bool,
     pub rollups_week_start: WeekStart,
@@ -194,6 +194,8 @@ impl App {
         rollup_week_state.select(Some(0));
         let mut rollup_month_state = ListState::default();
         rollup_month_state.select(Some(0));
+        let mut rollup_year_state = ListState::default();
+        rollup_year_state.select(Some(0));
         let mut rollup_day_state = ListState::default();
         rollup_day_state.select(Some(0));
 
@@ -221,6 +223,7 @@ impl App {
             rollup_focus: RollupFocus::Periods,
             rollup_week_state,
             rollup_month_state,
+            rollup_year_state,
             rollup_day_state,
             rollups_include_weekends: rollup_preferences.include_weekends,
             rollups_week_start: rollup_preferences.week_start,
@@ -330,7 +333,10 @@ impl App {
                 let message = if self.update_installable {
                     format!("Update available: v{} (press u to update)", info.latest)
                 } else {
-                    format!("Update available: v{} (update via package manager)", info.latest)
+                    format!(
+                        "Update available: v{} (update via package manager)",
+                        info.latest
+                    )
                 };
                 self.update_info = Some(info);
                 self.status = Some(message.clone());
@@ -509,16 +515,20 @@ impl App {
 
         let missing_project_ids = missing_project_ids(&valid_entries, &projects);
         if allow_api && !missing_project_ids.is_empty() {
+            let mut refreshed_projects: HashMap<u64, Project> = projects
+                .iter()
+                .cloned()
+                .map(|project| (project.id, project))
+                .collect();
+            let mut cache_changed = false;
+
             match client.fetch_projects(workspace.id) {
                 Ok(fresh_projects) => {
-                    self.update_cache_projects(workspace.id, &fresh_projects);
-                    projects = fresh_projects;
-                    client_names =
-                        match self.resolve_client_names(&client, allow_api, workspace.id, &projects)
-                        {
-                            Some(names) => names,
-                            None => return,
-                        };
+                    refreshed_projects = fresh_projects
+                        .into_iter()
+                        .map(|project| (project.id, project))
+                        .collect();
+                    cache_changed = true;
                 }
                 Err(err) => {
                     if matches!(err, TogglError::Unauthorized) {
@@ -526,6 +536,38 @@ impl App {
                         return;
                     }
                 }
+            }
+
+            let known_ids: HashSet<u64> = refreshed_projects.keys().copied().collect();
+            for project_id in missing_project_ids {
+                if known_ids.contains(&project_id) {
+                    continue;
+                }
+
+                match client.fetch_project(workspace.id, project_id) {
+                    Ok(project) => {
+                        refreshed_projects.insert(project.id, project);
+                        cache_changed = true;
+                    }
+                    Err(TogglError::Unauthorized) => {
+                        self.handle_error(TogglError::Unauthorized);
+                        return;
+                    }
+                    Err(_) => {}
+                }
+            }
+
+            if cache_changed {
+                let mut merged_projects: Vec<Project> = refreshed_projects.into_values().collect();
+                merged_projects
+                    .sort_by(|left, right| left.name.cmp(&right.name).then(left.id.cmp(&right.id)));
+                self.update_cache_projects(workspace.id, &merged_projects);
+                projects = merged_projects;
+                client_names =
+                    match self.resolve_client_names(&client, allow_api, workspace.id, &projects) {
+                        Some(names) => names,
+                        None => return,
+                    };
             }
         }
 
@@ -645,6 +687,8 @@ impl App {
                 self.set_date_range(DateRange::today());
             }
             KeyCode::Char('y') => self.set_date_range(DateRange::yesterday()),
+            KeyCode::Char('[') => self.shift_dashboard_date_range(-1),
+            KeyCode::Char(']') => self.shift_dashboard_date_range(1),
             KeyCode::Char('h') => self.show_help = true,
             KeyCode::Char('m') | KeyCode::Char('M') => self.toggle_theme(),
             KeyCode::Char('s') => self.enter_settings(),
@@ -714,6 +758,7 @@ impl App {
             KeyCode::Char('h') => self.show_help = true,
             KeyCode::Char('w') | KeyCode::Char('W') => self.set_rollup_view(RollupView::Weekly),
             KeyCode::Char('m') | KeyCode::Char('M') => self.set_rollup_view(RollupView::Monthly),
+            KeyCode::Char('y') | KeyCode::Char('Y') => self.set_rollup_view(RollupView::Yearly),
             KeyCode::Char('z') | KeyCode::Char('Z') => self.toggle_rollup_weekends(),
             KeyCode::Char('R')
                 if key.modifiers.contains(KeyModifiers::SHIFT)
@@ -733,7 +778,7 @@ impl App {
             KeyCode::Up => match self.rollup_focus {
                 RollupFocus::Periods => self.select_previous_rollup_period(),
                 RollupFocus::Days => {
-                    if self.rollup_view == RollupView::Monthly {
+                    if matches!(self.rollup_view, RollupView::Monthly | RollupView::Yearly) {
                         self.select_previous_rollup_day_by(self.rollup_vertical_step());
                     } else {
                         self.select_previous_rollup_day();
@@ -743,7 +788,7 @@ impl App {
             KeyCode::Down => match self.rollup_focus {
                 RollupFocus::Periods => self.select_next_rollup_period(),
                 RollupFocus::Days => {
-                    if self.rollup_view == RollupView::Monthly {
+                    if matches!(self.rollup_view, RollupView::Monthly | RollupView::Yearly) {
                         self.select_next_rollup_day_by(self.rollup_vertical_step());
                     } else {
                         self.select_next_rollup_day();
@@ -912,10 +957,32 @@ impl App {
     }
 
     fn set_date_range(&mut self, range: DateRange) {
+        self.set_date_range_with_resume(range, None);
+    }
+
+    fn set_date_range_with_resume(&mut self, range: DateRange, resume_mode: Option<Mode>) {
         self.date_range = range;
         self.mode = Mode::Loading;
         self.refresh_intent = RefreshIntent::CacheOnly;
+        self.refresh_resume_mode = resume_mode;
         self.needs_refresh = true;
+    }
+
+    fn shift_dashboard_date_range(&mut self, direction: i32) {
+        let direction = direction.signum();
+        if direction == 0 {
+            return;
+        }
+        let start = self.date_range.start_date();
+        let end = self.date_range.end_date();
+        let span_days = days_between(start, end) as i64;
+        if span_days <= 0 {
+            return;
+        }
+        let shift = chrono::Duration::days(span_days * direction as i64);
+        let next_start = start + shift;
+        let next_end = end + shift;
+        self.set_date_range(DateRange::from_bounds(next_start, next_end));
     }
 
     fn handle_settings_input(&mut self, key: KeyEvent) {
@@ -1645,7 +1712,11 @@ impl App {
 
     fn rebuild_rollups(&mut self) {
         let (rollup_start, rollup_end) = self.rollup_bounds();
-        let Some(workspace_id) = self.selected_workspace.as_ref().map(|workspace| workspace.id) else {
+        let Some(workspace_id) = self
+            .selected_workspace
+            .as_ref()
+            .map(|workspace| workspace.id)
+        else {
             self.rollups = build_rollups(
                 &self.time_entries,
                 rollup_start,
@@ -1672,7 +1743,8 @@ impl App {
         }
 
         let mut rollup_entries: Vec<TimeEntry> = entries_by_id.into_values().collect();
-        rollup_entries.sort_by(|left, right| left.start.cmp(&right.start).then(left.id.cmp(&right.id)));
+        rollup_entries
+            .sort_by(|left, right| left.start.cmp(&right.start).then(left.id.cmp(&right.id)));
 
         self.rollups = build_rollups(
             &rollup_entries,
@@ -1689,7 +1761,10 @@ impl App {
     fn rollup_bounds(&self) -> (NaiveDate, NaiveDate) {
         let start = self.date_range.start_date();
         let end = self.date_range.end_date();
-        (month_start(start), month_end(end))
+        match self.rollup_view {
+            RollupView::Yearly => (year_start(start), year_end(end)),
+            RollupView::Weekly | RollupView::Monthly => (month_start(start), month_end(end)),
+        }
     }
 
     fn align_rollup_selection_to_active_range(&mut self) {
@@ -1711,6 +1786,15 @@ impl App {
             .position(|period| period.start <= target_day && period.end >= target_day)
         {
             self.rollup_month_state.select(Some(index));
+        }
+
+        if let Some(index) = self
+            .rollups
+            .yearly
+            .iter()
+            .position(|period| period.start <= target_day && period.end >= target_day)
+        {
+            self.rollup_year_state.select(Some(index));
         }
     }
 
@@ -1777,6 +1861,7 @@ impl App {
             return;
         }
         self.rollup_view = view;
+        self.rebuild_rollups();
         self.ensure_rollup_selections();
     }
 
@@ -1826,6 +1911,7 @@ impl App {
         let scope = match self.rollup_view {
             RollupView::Weekly => "Week",
             RollupView::Monthly => "Month",
+            RollupView::Yearly => "Year",
         };
         Some(RefetchPlan {
             start: period.start,
@@ -1848,7 +1934,11 @@ impl App {
                 return;
             }
         };
-        let workspace_id = match self.selected_workspace.as_ref().map(|workspace| workspace.id) {
+        let workspace_id = match self
+            .selected_workspace
+            .as_ref()
+            .map(|workspace| workspace.id)
+        {
             Some(id) => id,
             None => {
                 self.refetch_plan = None;
@@ -1938,6 +2028,7 @@ impl App {
         match self.rollup_view {
             RollupView::Weekly => &self.rollups.weekly,
             RollupView::Monthly => &self.rollups.monthly,
+            RollupView::Yearly => &self.rollups.yearly,
         }
     }
 
@@ -1945,6 +2036,7 @@ impl App {
         match view {
             RollupView::Weekly => &self.rollups.weekly,
             RollupView::Monthly => &self.rollups.monthly,
+            RollupView::Yearly => &self.rollups.yearly,
         }
     }
 
@@ -1952,6 +2044,7 @@ impl App {
         match view {
             RollupView::Weekly => &mut self.rollup_week_state,
             RollupView::Monthly => &mut self.rollup_month_state,
+            RollupView::Yearly => &mut self.rollup_year_state,
         }
     }
 
@@ -1959,6 +2052,7 @@ impl App {
         match view {
             RollupView::Weekly => &self.rollup_week_state,
             RollupView::Monthly => &self.rollup_month_state,
+            RollupView::Yearly => &self.rollup_year_state,
         }
     }
 
@@ -2006,6 +2100,7 @@ impl App {
     fn ensure_rollup_selections(&mut self) {
         self.ensure_rollup_state_for_view(RollupView::Weekly);
         self.ensure_rollup_state_for_view(RollupView::Monthly);
+        self.ensure_rollup_state_for_view(RollupView::Yearly);
         self.ensure_rollup_day_selection();
     }
 
@@ -2497,7 +2592,9 @@ impl App {
             else {
                 continue;
             };
-            if cached_workspace != workspace_id || cached_end < start_date || cached_start > end_date
+            if cached_workspace != workspace_id
+                || cached_end < start_date
+                || cached_start > end_date
             {
                 continue;
             }
@@ -2866,6 +2963,14 @@ fn month_start(date: NaiveDate) -> NaiveDate {
     date.with_day(1).unwrap_or(date)
 }
 
+fn year_start(date: NaiveDate) -> NaiveDate {
+    NaiveDate::from_ymd_opt(date.year(), 1, 1).unwrap_or(date)
+}
+
+fn year_end(date: NaiveDate) -> NaiveDate {
+    NaiveDate::from_ymd_opt(date.year(), 12, 31).unwrap_or(date)
+}
+
 fn month_end(date: NaiveDate) -> NaiveDate {
     let (year, month) = if date.month() == 12 {
         (date.year() + 1, 1)
@@ -2890,7 +2995,9 @@ fn date_span(start: NaiveDate, end: NaiveDate) -> Vec<NaiveDate> {
     let mut current = start;
     while current <= end {
         days.push(current);
-        current = current.succ_opt().unwrap_or(current + chrono::Duration::days(1));
+        current = current
+            .succ_opt()
+            .unwrap_or(current + chrono::Duration::days(1));
     }
     days
 }

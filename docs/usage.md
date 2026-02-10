@@ -17,14 +17,18 @@
 - `t`: Today
 - `y`: Yesterday
 - `d`: Open date range modal
+- `[` / `]`: Shift current active date range backward/forward
 - `Tab`: Switch between start/end in date range modal
 
 ## Rollups
 - `o`: Open rollups view
 - `w`: Weekly rollups
 - `m`: Monthly rollups
+- `y`: Yearly rollups
 - `Tab`: Switch focus between periods and days
 - `Up/Down`: Navigate periods or days
+- `Left/Right`: Move one step in period/day lists
+- `Shift+R`: Refetch selected day/week/month/year from Toggl API
 - `Esc`: Back to dashboard
 
 ## Clipboard

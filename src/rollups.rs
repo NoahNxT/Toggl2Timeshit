@@ -25,6 +25,7 @@ pub struct Rollups {
     pub daily: Vec<DailyTotal>,
     pub weekly: Vec<PeriodRollup>,
     pub monthly: Vec<PeriodRollup>,
+    pub yearly: Vec<PeriodRollup>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -60,11 +61,13 @@ pub fn build_rollups(
     let daily = build_daily_totals(&totals, start, end);
     let weekly = build_weekly_rollups(&daily, week_start);
     let monthly = build_monthly_rollups(&daily);
+    let yearly = build_yearly_rollups(&daily);
 
     Rollups {
         daily,
         weekly,
         monthly,
+        yearly,
     }
 }
 
@@ -189,6 +192,42 @@ fn build_monthly_rollups(daily: &[DailyTotal]) -> Vec<PeriodRollup> {
     rollups
 }
 
+fn build_yearly_rollups(daily: &[DailyTotal]) -> Vec<PeriodRollup> {
+    let mut rollups = Vec::new();
+    let mut current_key: Option<i32> = None;
+    let mut current_rollup: Option<PeriodRollup> = None;
+
+    for day in daily {
+        let key = day.date.year();
+        if current_key.map(|value| value != key).unwrap_or(true) {
+            if let Some(rollup) = current_rollup.take() {
+                rollups.push(rollup);
+            }
+            current_key = Some(key);
+            current_rollup = Some(PeriodRollup {
+                label: key.to_string(),
+                start: day.date,
+                end: day.date,
+                days: 0,
+                seconds: 0,
+            });
+        }
+
+        if let Some(rollup) = current_rollup.as_mut() {
+            rollup.end = day.date;
+            rollup.days += 1;
+            rollup.seconds += day.seconds;
+            rollup.label = day.date.year().to_string();
+        }
+    }
+
+    if let Some(rollup) = current_rollup {
+        rollups.push(rollup);
+    }
+
+    rollups
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -224,6 +263,7 @@ mod tests {
         assert_eq!(rollups.weekly[0].days, 3);
         assert_eq!(rollups.weekly[0].seconds, 5400);
         assert_eq!(rollups.monthly.len(), 1);
+        assert_eq!(rollups.yearly.len(), 1);
     }
 
     #[test]
@@ -256,5 +296,21 @@ mod tests {
 
         assert_eq!(monday.weekly.len(), 2);
         assert_eq!(sunday.weekly.len(), 1);
+    }
+
+    #[test]
+    fn yearly_rollups_group_by_year() {
+        let entries = vec![
+            entry("2025-12-31T10:00:00Z", 1800),
+            entry("2026-01-01T10:00:00Z", 3600),
+        ];
+        let start = NaiveDate::from_ymd_opt(2025, 12, 31).unwrap();
+        let end = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
+
+        let rollups = build_rollups(&entries, start, end, None, WeekStart::Monday);
+
+        assert_eq!(rollups.yearly.len(), 2);
+        assert_eq!(rollups.yearly[0].label, "2025");
+        assert_eq!(rollups.yearly[1].label, "2026");
     }
 }

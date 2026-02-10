@@ -192,6 +192,7 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
     let periods = match app.rollup_view {
         RollupView::Weekly => &app.rollups.weekly,
         RollupView::Monthly => &app.rollups.monthly,
+        RollupView::Yearly => &app.rollups.yearly,
     };
 
     let period_items: Vec<ListItem> = if periods.is_empty() {
@@ -232,6 +233,7 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
     let period_title = match app.rollup_view {
         RollupView::Weekly => "Weeks",
         RollupView::Monthly => "Months",
+        RollupView::Yearly => "Years",
     };
 
     let period_list = List::new(period_items)
@@ -245,6 +247,9 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
         }
         RollupView::Monthly => {
             frame.render_stateful_widget(period_list, body[0], &mut app.rollup_month_state)
+        }
+        RollupView::Yearly => {
+            frame.render_stateful_widget(period_list, body[0], &mut app.rollup_year_state)
         }
     };
 
@@ -312,19 +317,27 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
     frame.render_widget(summary, right_sections[0]);
 
     if let Some(period) = app.rollup_selected_period() {
-        let calendar_lines = build_calendar_grid_lines(
+        let calendar = build_calendar_lines(
             &daily,
             period,
             selected_day.map(|day| day.date),
             app.rollup_focus,
+            app.rollup_view,
             app.target_hours,
             app.rollups_include_weekends,
             app.rollups_week_start,
             theme,
         );
-        let calendar = Paragraph::new(calendar_lines)
+        let viewport_height = right_sections[1].height.saturating_sub(2) as usize;
+        let scroll_y = calendar_scroll_offset(
+            calendar.selected_line,
+            calendar.lines.len(),
+            viewport_height,
+        );
+        let calendar = Paragraph::new(calendar.lines)
             .alignment(Alignment::Left)
             .block(panel_block("Calendar", theme))
+            .scroll((scroll_y, 0))
             .wrap(Wrap { trim: false });
         frame.render_widget(calendar, right_sections[1]);
     } else {
@@ -354,6 +367,7 @@ fn rollups_header_line(app: &App, theme: &Theme) -> Line<'static> {
     let view_label = match app.rollup_view {
         RollupView::Weekly => "Weekly",
         RollupView::Monthly => "Monthly",
+        RollupView::Yearly => "Yearly",
     };
     let weekends = if app.rollups_include_weekends {
         "On"
@@ -401,6 +415,8 @@ fn rollups_footer_line(app: &mut App, theme: &Theme) -> Line<'static> {
         Span::styled("w weekly", theme.muted_style()),
         Span::raw(" · "),
         Span::styled("m monthly", theme.muted_style()),
+        Span::raw(" · "),
+        Span::styled("y yearly", theme.muted_style()),
         Span::raw(" · "),
         Span::styled("z weekends", theme.muted_style()),
         Span::raw(" · "),
@@ -467,6 +483,10 @@ fn footer_line(app: &mut App, theme: &Theme) -> Line<'static> {
         Span::styled("h help", theme.muted_style()),
         Span::raw(" · "),
         Span::styled("o rollups", theme.muted_style()),
+        Span::raw(" · "),
+        Span::styled("[/]", theme.muted_style()),
+        Span::raw(" "),
+        Span::styled("period", theme.muted_style()),
         Span::raw(" · "),
         Span::styled("s settings", theme.muted_style()),
         Span::raw(" · "),
@@ -624,10 +644,7 @@ fn draw_refetch_confirm(frame: &mut Frame, app: &App, area: Rect, theme: &Theme)
             Line::from(format!("Range: {} → {}", plan.start, plan.end)),
             Line::from(format!("Days: {}", plan.days)),
             Line::from(""),
-            Line::from(Span::styled(
-                warning,
-                Style::default().fg(theme.error),
-            )),
+            Line::from(Span::styled(warning, Style::default().fg(theme.error))),
             Line::from(Span::styled(
                 "Free Toggl accounts usually have a hard daily limit (about 30 calls).",
                 Style::default().fg(theme.error),
@@ -741,7 +758,48 @@ fn target_hours_for_day(day: NaiveDate, target_hours: f64, include_weekends: boo
     }
 }
 
-fn build_calendar_grid_lines(
+struct CalendarRender {
+    lines: Vec<Line<'static>>,
+    selected_line: Option<usize>,
+}
+
+fn build_calendar_lines(
+    daily: &[&DailyTotal],
+    period: &PeriodRollup,
+    selected_date: Option<NaiveDate>,
+    focus: RollupFocus,
+    rollup_view: RollupView,
+    target_hours: f64,
+    include_weekends: bool,
+    week_start: WeekStart,
+    theme: &Theme,
+) -> CalendarRender {
+    if matches!(rollup_view, RollupView::Yearly) {
+        build_yearly_calendar_lines(
+            daily,
+            period,
+            selected_date,
+            focus,
+            target_hours,
+            include_weekends,
+            week_start,
+            theme,
+        )
+    } else {
+        build_period_calendar_grid_lines(
+            daily,
+            period,
+            selected_date,
+            focus,
+            target_hours,
+            include_weekends,
+            week_start,
+            theme,
+        )
+    }
+}
+
+fn build_period_calendar_grid_lines(
     daily: &[&DailyTotal],
     period: &PeriodRollup,
     selected_date: Option<NaiveDate>,
@@ -750,7 +808,7 @@ fn build_calendar_grid_lines(
     include_weekends: bool,
     week_start: WeekStart,
     theme: &Theme,
-) -> Vec<Line<'static>> {
+) -> CalendarRender {
     let mut map: HashMap<NaiveDate, i64> = HashMap::new();
     for day in daily {
         map.insert(day.date, day.seconds);
@@ -805,27 +863,31 @@ fn build_calendar_grid_lines(
     }
 
     if week_rows.is_empty() {
-        return vec![Line::from("No days")];
+        return CalendarRender {
+            lines: vec![Line::from("No days")],
+            selected_line: None,
+        };
     }
 
     let border_style = theme.border_style();
     let today = Local::now().date_naive();
     let horizontal = "─".repeat(cell_width);
     let mut lines = Vec::new();
+    let mut selected_line = None;
 
     let build_border =
         |left: &'static str, join: &'static str, right: &'static str| -> Line<'static> {
-        let mut spans = Vec::new();
-        spans.push(Span::styled(left, border_style));
-        for column in 0..column_count {
-            spans.push(Span::styled(horizontal.clone(), border_style));
-            if column + 1 < column_count {
-                spans.push(Span::styled(join, border_style));
+            let mut spans = Vec::new();
+            spans.push(Span::styled(left, border_style));
+            for column in 0..column_count {
+                spans.push(Span::styled(horizontal.clone(), border_style));
+                if column + 1 < column_count {
+                    spans.push(Span::styled(join, border_style));
+                }
             }
-        }
-        spans.push(Span::styled(right, border_style));
-        Line::from(spans)
-    };
+            spans.push(Span::styled(right, border_style));
+            Line::from(spans)
+        };
 
     let build_text_row = |values: Vec<(String, Style)>| -> Line<'static> {
         let mut spans = Vec::new();
@@ -856,6 +918,9 @@ fn build_calendar_grid_lines(
     for (week_index, week) in week_rows.iter().enumerate() {
         let mut day_values = Vec::new();
         let mut hour_values = Vec::new();
+        let has_selected = selected_date
+            .map(|date| week.iter().any(|cell| *cell == Some(date)))
+            .unwrap_or(false);
         for cell in week {
             match cell {
                 Some(date) => {
@@ -881,16 +946,35 @@ fn build_calendar_grid_lines(
                     if *date == today {
                         style = style.add_modifier(Modifier::UNDERLINED);
                     }
-                    day_values.push((format!("{:^width$}", format!("{:02}", date.day()), width = cell_width), style));
-                    hour_values.push((format!("{:^width$}", format!("{:.2}h", hours), width = cell_width), style));
+                    day_values.push((
+                        format!(
+                            "{:^width$}",
+                            format!("{:02}", date.day()),
+                            width = cell_width
+                        ),
+                        style,
+                    ));
+                    hour_values.push((
+                        format!("{:^width$}", format!("{:.2}h", hours), width = cell_width),
+                        style,
+                    ));
                 }
                 None => {
-                    day_values.push((format!("{:width$}", "", width = cell_width), theme.muted_style()));
-                    hour_values.push((format!("{:width$}", "", width = cell_width), theme.muted_style()));
+                    day_values.push((
+                        format!("{:width$}", "", width = cell_width),
+                        theme.muted_style(),
+                    ));
+                    hour_values.push((
+                        format!("{:width$}", "", width = cell_width),
+                        theme.muted_style(),
+                    ));
                 }
             }
         }
 
+        if has_selected && selected_line.is_none() {
+            selected_line = Some(lines.len());
+        }
         lines.push(build_text_row(day_values));
         lines.push(build_text_row(hour_values));
         if week_index + 1 < week_rows.len() {
@@ -899,7 +983,121 @@ fn build_calendar_grid_lines(
             lines.push(build_border("└", "┴", "┘"));
         }
     }
-    lines
+    CalendarRender {
+        lines,
+        selected_line,
+    }
+}
+
+fn build_yearly_calendar_lines(
+    daily: &[&DailyTotal],
+    period: &PeriodRollup,
+    selected_date: Option<NaiveDate>,
+    focus: RollupFocus,
+    target_hours: f64,
+    include_weekends: bool,
+    week_start: WeekStart,
+    theme: &Theme,
+) -> CalendarRender {
+    let mut all_lines = Vec::new();
+    let mut selected_line = None;
+
+    let mut current = NaiveDate::from_ymd_opt(period.start.year(), 1, 1).unwrap_or(period.start);
+    let year_end = NaiveDate::from_ymd_opt(period.end.year(), 12, 31).unwrap_or(period.end);
+
+    while current <= year_end {
+        let month_start =
+            NaiveDate::from_ymd_opt(current.year(), current.month(), 1).unwrap_or(current);
+        let month_end = month_end(month_start);
+        let clamped_start = if month_start < period.start {
+            period.start
+        } else {
+            month_start
+        };
+        let clamped_end = if month_end > period.end {
+            period.end
+        } else {
+            month_end
+        };
+
+        if clamped_start <= clamped_end {
+            all_lines.push(Line::from(Span::styled(
+                month_start.format("%B %Y").to_string(),
+                theme.title_style(),
+            )));
+            let month_period = PeriodRollup {
+                label: month_start.format("%B %Y").to_string(),
+                start: clamped_start,
+                end: clamped_end,
+                days: 0,
+                seconds: 0,
+            };
+            let month_render = build_period_calendar_grid_lines(
+                daily,
+                &month_period,
+                selected_date,
+                focus,
+                target_hours,
+                include_weekends,
+                week_start,
+                theme,
+            );
+            let start_line = all_lines.len();
+            if selected_line.is_none() {
+                selected_line = month_render.selected_line.map(|line| start_line + line);
+            }
+            all_lines.extend(month_render.lines);
+            all_lines.push(Line::from(""));
+        }
+
+        let (next_year, next_month) = if current.month() == 12 {
+            (current.year() + 1, 1)
+        } else {
+            (current.year(), current.month() + 1)
+        };
+        current = NaiveDate::from_ymd_opt(next_year, next_month, 1)
+            .unwrap_or(year_end + Duration::days(1));
+    }
+
+    while matches!(all_lines.last(), Some(line) if line.spans.is_empty()) {
+        all_lines.pop();
+    }
+
+    CalendarRender {
+        lines: if all_lines.is_empty() {
+            vec![Line::from("No days")]
+        } else {
+            all_lines
+        },
+        selected_line,
+    }
+}
+
+fn calendar_scroll_offset(
+    selected_line: Option<usize>,
+    total_lines: usize,
+    viewport_height: usize,
+) -> u16 {
+    if viewport_height == 0 || total_lines <= viewport_height {
+        return 0;
+    }
+    let max_offset = total_lines.saturating_sub(viewport_height);
+    let target_line = selected_line.unwrap_or(0);
+    let offset = target_line
+        .saturating_sub(viewport_height / 2)
+        .min(max_offset);
+    offset as u16
+}
+
+fn month_end(date: NaiveDate) -> NaiveDate {
+    let (year, month) = if date.month() == 12 {
+        (date.year() + 1, 1)
+    } else {
+        (date.year(), date.month() + 1)
+    };
+    NaiveDate::from_ymd_opt(year, month, 1)
+        .and_then(|next| next.pred_opt())
+        .unwrap_or(date)
 }
 
 fn draw_help(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
@@ -971,6 +1169,10 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
             Cell::from("Set date range"),
         ]),
         Row::new(vec![
+            Cell::from(Span::styled("[ / ]", key_style)),
+            Cell::from("Previous / next active date range"),
+        ]),
+        Row::new(vec![
             Cell::from(Span::styled("Tab", key_style)),
             Cell::from("Switch range field"),
         ]),
@@ -984,8 +1186,8 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
             Cell::from("Open rollups view"),
         ]),
         Row::new(vec![
-            Cell::from(Span::styled("w / m", key_style)),
-            Cell::from("Weekly / monthly view"),
+            Cell::from(Span::styled("w / m / y", key_style)),
+            Cell::from("Weekly / monthly / yearly view"),
         ]),
         Row::new(vec![
             Cell::from(Span::styled("z", key_style)),
@@ -993,7 +1195,7 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
         ]),
         Row::new(vec![
             Cell::from(Span::styled("Shift+R", key_style)),
-            Cell::from("Refetch selected day/week/month"),
+            Cell::from("Refetch selected day/week/month/year"),
         ]),
         Row::new(vec![
             Cell::from(Span::styled("Left/Right", key_style)),
@@ -1001,7 +1203,7 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
         ]),
         Row::new(vec![
             Cell::from(Span::styled("Up/Down", key_style)),
-            Cell::from("Move period; in month-day view jump week"),
+            Cell::from("Move period; in month/year day view jump week"),
         ]),
         Row::new(vec![
             Cell::from(Span::styled("Tab", key_style)),
