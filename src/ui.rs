@@ -468,6 +468,10 @@ fn footer_line(app: &mut App, theme: &Theme) -> Line<'static> {
         Span::raw(" · "),
         Span::styled("o rollups", theme.muted_style()),
         Span::raw(" · "),
+        Span::styled("[/]", theme.muted_style()),
+        Span::raw(" "),
+        Span::styled("period", theme.muted_style()),
+        Span::raw(" · "),
         Span::styled("s settings", theme.muted_style()),
         Span::raw(" · "),
         Span::styled("q quit", theme.muted_style()),
@@ -969,6 +973,10 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
         Row::new(vec![
             Cell::from(Span::styled("d", key_style)),
             Cell::from("Set date range"),
+        ]),
+        Row::new(vec![
+            Cell::from(Span::styled("[ / ]", key_style)),
+            Cell::from("Previous / next active date range"),
         ]),
         Row::new(vec![
             Cell::from(Span::styled("Tab", key_style)),

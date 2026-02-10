@@ -645,6 +645,8 @@ impl App {
                 self.set_date_range(DateRange::today());
             }
             KeyCode::Char('y') => self.set_date_range(DateRange::yesterday()),
+            KeyCode::Char('[') => self.shift_dashboard_date_range(-1),
+            KeyCode::Char(']') => self.shift_dashboard_date_range(1),
             KeyCode::Char('h') => self.show_help = true,
             KeyCode::Char('m') | KeyCode::Char('M') => self.toggle_theme(),
             KeyCode::Char('s') => self.enter_settings(),
@@ -912,10 +914,32 @@ impl App {
     }
 
     fn set_date_range(&mut self, range: DateRange) {
+        self.set_date_range_with_resume(range, None);
+    }
+
+    fn set_date_range_with_resume(&mut self, range: DateRange, resume_mode: Option<Mode>) {
         self.date_range = range;
         self.mode = Mode::Loading;
         self.refresh_intent = RefreshIntent::CacheOnly;
+        self.refresh_resume_mode = resume_mode;
         self.needs_refresh = true;
+    }
+
+    fn shift_dashboard_date_range(&mut self, direction: i32) {
+        let direction = direction.signum();
+        if direction == 0 {
+            return;
+        }
+        let start = self.date_range.start_date();
+        let end = self.date_range.end_date();
+        let span_days = days_between(start, end) as i64;
+        if span_days <= 0 {
+            return;
+        }
+        let shift = chrono::Duration::days(span_days * direction as i64);
+        let next_start = start + shift;
+        let next_end = end + shift;
+        self.set_date_range(DateRange::from_bounds(next_start, next_end));
     }
 
     fn handle_settings_input(&mut self, key: KeyEvent) {
