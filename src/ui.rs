@@ -644,10 +644,7 @@ fn draw_refetch_confirm(frame: &mut Frame, app: &App, area: Rect, theme: &Theme)
             Line::from(format!("Range: {} → {}", plan.start, plan.end)),
             Line::from(format!("Days: {}", plan.days)),
             Line::from(""),
-            Line::from(Span::styled(
-                warning,
-                Style::default().fg(theme.error),
-            )),
+            Line::from(Span::styled(warning, Style::default().fg(theme.error))),
             Line::from(Span::styled(
                 "Free Toggl accounts usually have a hard daily limit (about 30 calls).",
                 Style::default().fg(theme.error),

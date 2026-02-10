@@ -9,9 +9,7 @@ use crate::grouping::{GroupedEntry, GroupedProject, group_entries};
 use crate::models::{Client as TogglClientModel, Project, TimeEntry, Workspace};
 use crate::rollups::{DailyTotal, PeriodRollup, Rollups, WeekStart, build_rollups};
 use crate::rounding::{RoundingConfig, RoundingMode};
-use crate::storage::{
-    self, CacheFile, CachedData, QuotaFile, RollupPreferences, ThemePreference,
-};
+use crate::storage::{self, CacheFile, CachedData, QuotaFile, RollupPreferences, ThemePreference};
 use crate::toggl::{TogglClient, TogglError};
 use crate::update::{self, UpdateInfo};
 use arboard::Clipboard;
@@ -335,7 +333,10 @@ impl App {
                 let message = if self.update_installable {
                     format!("Update available: v{} (press u to update)", info.latest)
                 } else {
-                    format!("Update available: v{} (update via package manager)", info.latest)
+                    format!(
+                        "Update available: v{} (update via package manager)",
+                        info.latest
+                    )
                 };
                 self.update_info = Some(info);
                 self.status = Some(message.clone());
@@ -1711,7 +1712,11 @@ impl App {
 
     fn rebuild_rollups(&mut self) {
         let (rollup_start, rollup_end) = self.rollup_bounds();
-        let Some(workspace_id) = self.selected_workspace.as_ref().map(|workspace| workspace.id) else {
+        let Some(workspace_id) = self
+            .selected_workspace
+            .as_ref()
+            .map(|workspace| workspace.id)
+        else {
             self.rollups = build_rollups(
                 &self.time_entries,
                 rollup_start,
@@ -1738,7 +1743,8 @@ impl App {
         }
 
         let mut rollup_entries: Vec<TimeEntry> = entries_by_id.into_values().collect();
-        rollup_entries.sort_by(|left, right| left.start.cmp(&right.start).then(left.id.cmp(&right.id)));
+        rollup_entries
+            .sort_by(|left, right| left.start.cmp(&right.start).then(left.id.cmp(&right.id)));
 
         self.rollups = build_rollups(
             &rollup_entries,
@@ -1928,7 +1934,11 @@ impl App {
                 return;
             }
         };
-        let workspace_id = match self.selected_workspace.as_ref().map(|workspace| workspace.id) {
+        let workspace_id = match self
+            .selected_workspace
+            .as_ref()
+            .map(|workspace| workspace.id)
+        {
             Some(id) => id,
             None => {
                 self.refetch_plan = None;
@@ -2582,7 +2592,9 @@ impl App {
             else {
                 continue;
             };
-            if cached_workspace != workspace_id || cached_end < start_date || cached_start > end_date
+            if cached_workspace != workspace_id
+                || cached_end < start_date
+                || cached_start > end_date
             {
                 continue;
             }
@@ -2983,7 +2995,9 @@ fn date_span(start: NaiveDate, end: NaiveDate) -> Vec<NaiveDate> {
     let mut current = start;
     while current <= end {
         days.push(current);
-        current = current.succ_opt().unwrap_or(current + chrono::Duration::days(1));
+        current = current
+            .succ_opt()
+            .unwrap_or(current + chrono::Duration::days(1));
     }
     days
 }
