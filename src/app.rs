@@ -471,7 +471,7 @@ impl App {
             }
         };
 
-        let projects = match self.resolve_projects(
+        let mut projects = match self.resolve_projects(
             &client,
             allow_api,
             workspace.id,
@@ -482,7 +482,7 @@ impl App {
             None => return,
         };
 
-        let client_names =
+        let mut client_names =
             match self.resolve_client_names(&client, allow_api, workspace.id, &projects) {
                 Some(names) => names,
                 None => return,
@@ -506,6 +506,28 @@ impl App {
             .into_iter()
             .filter(|entry| entry.stop.is_some())
             .collect();
+
+        let missing_project_ids = missing_project_ids(&valid_entries, &projects);
+        if allow_api && !missing_project_ids.is_empty() {
+            match client.fetch_projects(workspace.id) {
+                Ok(fresh_projects) => {
+                    self.update_cache_projects(workspace.id, &fresh_projects);
+                    projects = fresh_projects;
+                    client_names =
+                        match self.resolve_client_names(&client, allow_api, workspace.id, &projects)
+                        {
+                            Some(names) => names,
+                            None => return,
+                        };
+                }
+                Err(err) => {
+                    if matches!(err, TogglError::Unauthorized) {
+                        self.handle_error(err);
+                        return;
+                    }
+                }
+            }
+        }
 
         let grouped = group_entries(
             &valid_entries,
@@ -2821,6 +2843,15 @@ fn parse_rfc3339_date(value: &str) -> Option<NaiveDate> {
 
 fn parse_entry_date(entry: &TimeEntry) -> Option<NaiveDate> {
     parse_rfc3339_date(&entry.start)
+}
+
+fn missing_project_ids(entries: &[TimeEntry], projects: &[Project]) -> HashSet<u64> {
+    let known_ids: HashSet<u64> = projects.iter().map(|project| project.id).collect();
+    entries
+        .iter()
+        .filter_map(|entry| entry.project_id)
+        .filter(|project_id| !known_ids.contains(project_id))
+        .collect()
 }
 
 fn parse_cache_key_bounds(key: &str) -> Option<(u64, NaiveDate, NaiveDate)> {
