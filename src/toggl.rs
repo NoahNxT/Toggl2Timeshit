@@ -50,6 +50,14 @@ impl TogglClient {
         self.fetch(url)
     }
 
+    pub fn fetch_project(&self, workspace_id: u64, project_id: u64) -> Result<Project, TogglError> {
+        let url = format!(
+            "https://api.track.toggl.com/api/v9/workspaces/{}/projects/{}",
+            workspace_id, project_id
+        );
+        self.fetch(url)
+    }
+
     pub fn fetch_clients(&self, workspace_id: u64) -> Result<Vec<TogglClientModel>, TogglError> {
         let url = format!(
             "https://api.track.toggl.com/api/v9/workspaces/{}/clients",

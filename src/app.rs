@@ -509,16 +509,20 @@ impl App {
 
         let missing_project_ids = missing_project_ids(&valid_entries, &projects);
         if allow_api && !missing_project_ids.is_empty() {
+            let mut refreshed_projects: HashMap<u64, Project> = projects
+                .iter()
+                .cloned()
+                .map(|project| (project.id, project))
+                .collect();
+            let mut cache_changed = false;
+
             match client.fetch_projects(workspace.id) {
                 Ok(fresh_projects) => {
-                    self.update_cache_projects(workspace.id, &fresh_projects);
-                    projects = fresh_projects;
-                    client_names =
-                        match self.resolve_client_names(&client, allow_api, workspace.id, &projects)
-                        {
-                            Some(names) => names,
-                            None => return,
-                        };
+                    refreshed_projects = fresh_projects
+                        .into_iter()
+                        .map(|project| (project.id, project))
+                        .collect();
+                    cache_changed = true;
                 }
                 Err(err) => {
                     if matches!(err, TogglError::Unauthorized) {
@@ -526,6 +530,38 @@ impl App {
                         return;
                     }
                 }
+            }
+
+            let known_ids: HashSet<u64> = refreshed_projects.keys().copied().collect();
+            for project_id in missing_project_ids {
+                if known_ids.contains(&project_id) {
+                    continue;
+                }
+
+                match client.fetch_project(workspace.id, project_id) {
+                    Ok(project) => {
+                        refreshed_projects.insert(project.id, project);
+                        cache_changed = true;
+                    }
+                    Err(TogglError::Unauthorized) => {
+                        self.handle_error(TogglError::Unauthorized);
+                        return;
+                    }
+                    Err(_) => {}
+                }
+            }
+
+            if cache_changed {
+                let mut merged_projects: Vec<Project> = refreshed_projects.into_values().collect();
+                merged_projects
+                    .sort_by(|left, right| left.name.cmp(&right.name).then(left.id.cmp(&right.id)));
+                self.update_cache_projects(workspace.id, &merged_projects);
+                projects = merged_projects;
+                client_names =
+                    match self.resolve_client_names(&client, allow_api, workspace.id, &projects) {
+                        Some(names) => names,
+                        None => return,
+                    };
             }
         }
 
