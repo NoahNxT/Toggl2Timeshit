@@ -120,8 +120,17 @@ Date range selection is done inside the TUI (`d`).
 - `x` copy entries with client + project
 - `d` set date range
 - `y` yesterday
+- `[` / `]` previous / next active date range
 - `r` refresh
 - Arrow keys to navigate projects
+
+## Keybinds (rollups)
+- `o` open rollups
+- `w` weekly view
+- `m` monthly view
+- `y` yearly view
+- `Shift+R` refetch selected day/week/month/year
+- `z` toggle weekends in rollups
 
 ## Docs
 Full documentation lives in `docs/` and is published via GitHub Pages.
