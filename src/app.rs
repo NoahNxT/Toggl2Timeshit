@@ -42,6 +42,7 @@ pub enum DashboardFocus {
 pub enum RollupView {
     Weekly,
     Monthly,
+    Yearly,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,6 +125,7 @@ pub struct App {
     pub rollup_focus: RollupFocus,
     pub rollup_week_state: ListState,
     pub rollup_month_state: ListState,
+    pub rollup_year_state: ListState,
     pub rollup_day_state: ListState,
     pub rollups_include_weekends: bool,
     pub rollups_week_start: WeekStart,
@@ -194,6 +196,8 @@ impl App {
         rollup_week_state.select(Some(0));
         let mut rollup_month_state = ListState::default();
         rollup_month_state.select(Some(0));
+        let mut rollup_year_state = ListState::default();
+        rollup_year_state.select(Some(0));
         let mut rollup_day_state = ListState::default();
         rollup_day_state.select(Some(0));
 
@@ -221,6 +225,7 @@ impl App {
             rollup_focus: RollupFocus::Periods,
             rollup_week_state,
             rollup_month_state,
+            rollup_year_state,
             rollup_day_state,
             rollups_include_weekends: rollup_preferences.include_weekends,
             rollups_week_start: rollup_preferences.week_start,
@@ -752,6 +757,7 @@ impl App {
             KeyCode::Char('h') => self.show_help = true,
             KeyCode::Char('w') | KeyCode::Char('W') => self.set_rollup_view(RollupView::Weekly),
             KeyCode::Char('m') | KeyCode::Char('M') => self.set_rollup_view(RollupView::Monthly),
+            KeyCode::Char('y') | KeyCode::Char('Y') => self.set_rollup_view(RollupView::Yearly),
             KeyCode::Char('z') | KeyCode::Char('Z') => self.toggle_rollup_weekends(),
             KeyCode::Char('R')
                 if key.modifiers.contains(KeyModifiers::SHIFT)
@@ -771,7 +777,7 @@ impl App {
             KeyCode::Up => match self.rollup_focus {
                 RollupFocus::Periods => self.select_previous_rollup_period(),
                 RollupFocus::Days => {
-                    if self.rollup_view == RollupView::Monthly {
+                    if matches!(self.rollup_view, RollupView::Monthly | RollupView::Yearly) {
                         self.select_previous_rollup_day_by(self.rollup_vertical_step());
                     } else {
                         self.select_previous_rollup_day();
@@ -781,7 +787,7 @@ impl App {
             KeyCode::Down => match self.rollup_focus {
                 RollupFocus::Periods => self.select_next_rollup_period(),
                 RollupFocus::Days => {
-                    if self.rollup_view == RollupView::Monthly {
+                    if matches!(self.rollup_view, RollupView::Monthly | RollupView::Yearly) {
                         self.select_next_rollup_day_by(self.rollup_vertical_step());
                     } else {
                         self.select_next_rollup_day();
@@ -1749,7 +1755,10 @@ impl App {
     fn rollup_bounds(&self) -> (NaiveDate, NaiveDate) {
         let start = self.date_range.start_date();
         let end = self.date_range.end_date();
-        (month_start(start), month_end(end))
+        match self.rollup_view {
+            RollupView::Yearly => (year_start(start), year_end(end)),
+            RollupView::Weekly | RollupView::Monthly => (month_start(start), month_end(end)),
+        }
     }
 
     fn align_rollup_selection_to_active_range(&mut self) {
@@ -1771,6 +1780,15 @@ impl App {
             .position(|period| period.start <= target_day && period.end >= target_day)
         {
             self.rollup_month_state.select(Some(index));
+        }
+
+        if let Some(index) = self
+            .rollups
+            .yearly
+            .iter()
+            .position(|period| period.start <= target_day && period.end >= target_day)
+        {
+            self.rollup_year_state.select(Some(index));
         }
     }
 
@@ -1837,6 +1855,7 @@ impl App {
             return;
         }
         self.rollup_view = view;
+        self.rebuild_rollups();
         self.ensure_rollup_selections();
     }
 
@@ -1886,6 +1905,7 @@ impl App {
         let scope = match self.rollup_view {
             RollupView::Weekly => "Week",
             RollupView::Monthly => "Month",
+            RollupView::Yearly => "Year",
         };
         Some(RefetchPlan {
             start: period.start,
@@ -1998,6 +2018,7 @@ impl App {
         match self.rollup_view {
             RollupView::Weekly => &self.rollups.weekly,
             RollupView::Monthly => &self.rollups.monthly,
+            RollupView::Yearly => &self.rollups.yearly,
         }
     }
 
@@ -2005,6 +2026,7 @@ impl App {
         match view {
             RollupView::Weekly => &self.rollups.weekly,
             RollupView::Monthly => &self.rollups.monthly,
+            RollupView::Yearly => &self.rollups.yearly,
         }
     }
 
@@ -2012,6 +2034,7 @@ impl App {
         match view {
             RollupView::Weekly => &mut self.rollup_week_state,
             RollupView::Monthly => &mut self.rollup_month_state,
+            RollupView::Yearly => &mut self.rollup_year_state,
         }
     }
 
@@ -2019,6 +2042,7 @@ impl App {
         match view {
             RollupView::Weekly => &self.rollup_week_state,
             RollupView::Monthly => &self.rollup_month_state,
+            RollupView::Yearly => &self.rollup_year_state,
         }
     }
 
@@ -2066,6 +2090,7 @@ impl App {
     fn ensure_rollup_selections(&mut self) {
         self.ensure_rollup_state_for_view(RollupView::Weekly);
         self.ensure_rollup_state_for_view(RollupView::Monthly);
+        self.ensure_rollup_state_for_view(RollupView::Yearly);
         self.ensure_rollup_day_selection();
     }
 
@@ -2924,6 +2949,14 @@ fn parse_cache_key_bounds(key: &str) -> Option<(u64, NaiveDate, NaiveDate)> {
 
 fn month_start(date: NaiveDate) -> NaiveDate {
     date.with_day(1).unwrap_or(date)
+}
+
+fn year_start(date: NaiveDate) -> NaiveDate {
+    NaiveDate::from_ymd_opt(date.year(), 1, 1).unwrap_or(date)
+}
+
+fn year_end(date: NaiveDate) -> NaiveDate {
+    NaiveDate::from_ymd_opt(date.year(), 12, 31).unwrap_or(date)
 }
 
 fn month_end(date: NaiveDate) -> NaiveDate {
