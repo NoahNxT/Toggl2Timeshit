@@ -38,7 +38,7 @@ npm remove -g toggl2timeshit
 ```
 
 ### Windows
-**Chocolatey**
+**Chocolatey** (In Review)
 ```powershell
 choco install timeshit
 ```
@@ -52,7 +52,7 @@ scoop bucket add nxt-solutions https://github.com/NoahNxT/scoop-nxt-solutions-pa
 scoop install timeshit
 ```
 
-**Winget**
+**Winget** (In Review)
 ```powershell
 winget install NxTSolutions.Timeshit
 ```
