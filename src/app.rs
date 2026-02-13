@@ -1886,6 +1886,49 @@ impl App {
         }
     }
 
+    fn rollup_toggle_day(&self) -> NaiveDate {
+        let daily = self.rollup_daily_for_selected_period();
+        if let Some(index) = self.rollup_day_state.selected() {
+            if let Some(day) = daily.get(index) {
+                return day.date;
+            }
+        }
+        if let Some(first) = daily.first() {
+            return first.date;
+        }
+        self.date_range.end_date()
+    }
+
+    fn toggle_non_working_day(&mut self, day: NaiveDate) {
+        let was_marked = self.non_working_days.contains(&day);
+        if was_marked {
+            self.non_working_days.remove(&day);
+        } else {
+            self.non_working_days.insert(day);
+        }
+
+        if let Err(err) = storage::write_non_working_days(&self.non_working_days) {
+            if was_marked {
+                self.non_working_days.insert(day);
+            } else {
+                self.non_working_days.remove(&day);
+            }
+            let message = format!("Failed to save non-working days: {err}");
+            self.status = Some(message.clone());
+            self.set_toast(message, true);
+            return;
+        }
+
+        let date = day.format("%Y-%m-%d");
+        let message = if was_marked {
+            format!("Removed {date} from vacation/non-working days.")
+        } else {
+            format!("Marked {date} as vacation/non-working day.")
+        };
+        self.status = Some(message.clone());
+        self.set_toast(message, false);
+    }
+
     fn open_rollup_refetch_confirm(&mut self) {
         let Some(plan) = self.selected_rollup_refetch_plan() else {
             self.status = Some("Select a rollup period/day first.".to_string());
