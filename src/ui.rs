@@ -746,12 +746,14 @@ fn period_target_hours(
     period: &PeriodRollup,
     target_hours: f64,
     include_weekends: bool,
+    non_working_days: &HashSet<NaiveDate>,
 ) -> (f64, usize) {
     let mut days = 0usize;
     let mut total = 0.0;
     let mut current = period.start;
     while current <= period.end {
-        let target = target_hours_for_day(current, target_hours, include_weekends);
+        let target =
+            target_hours_for_day(current, target_hours, include_weekends, non_working_days);
         if target > 0.0 {
             days += 1;
         }
@@ -766,6 +768,7 @@ fn period_overtime_left_hours(
     daily: &[DailyTotal],
     target_hours: f64,
     include_weekends: bool,
+    non_working_days: &HashSet<NaiveDate>,
     active_end: NaiveDate,
 ) -> f64 {
     let cutoff = period.end.min(active_end);
@@ -779,7 +782,13 @@ fn period_overtime_left_hours(
         .fold((0i64, 0.0f64), |(worked, target), day| {
             (
                 worked + day.seconds,
-                target + target_hours_for_day(day.date, target_hours, include_weekends),
+                target
+                    + target_hours_for_day(
+                        day.date,
+                        target_hours,
+                        include_weekends,
+                        non_working_days,
+                    ),
             )
         });
 
@@ -787,7 +796,37 @@ fn period_overtime_left_hours(
     if overtime > 0.0 { overtime } else { 0.0 }
 }
 
-fn target_hours_for_day(day: NaiveDate, target_hours: f64, include_weekends: bool) -> f64 {
+fn period_worked_totals_until(
+    period: &PeriodRollup,
+    daily: &[DailyTotal],
+    active_end: NaiveDate,
+) -> (i64, usize) {
+    let cutoff = period.end.min(active_end);
+    if cutoff < period.start {
+        return (0, 0);
+    }
+
+    daily
+        .iter()
+        .filter(|day| day.date >= period.start && day.date <= cutoff)
+        .fold((0i64, 0usize), |(worked_seconds, worked_days), day| {
+            if day.seconds > 0 {
+                (worked_seconds + day.seconds, worked_days + 1)
+            } else {
+                (worked_seconds, worked_days)
+            }
+        })
+}
+
+fn target_hours_for_day(
+    day: NaiveDate,
+    target_hours: f64,
+    include_weekends: bool,
+    non_working_days: &HashSet<NaiveDate>,
+) -> f64 {
+    if non_working_days.contains(&day) {
+        return 0.0;
+    }
     if include_weekends || day.weekday().number_from_monday() <= 5 {
         target_hours
     } else {
