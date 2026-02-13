@@ -119,6 +119,7 @@ Date range selection is done inside the TUI (`d`).
 - `v` copy project entries
 - `x` copy entries with client + project
 - `d` set date range
+- `k` toggle vacation/non-working for active day
 - `y` yesterday
 - `[` / `]` previous / next active date range
 - `r` refresh
@@ -131,6 +132,7 @@ Date range selection is done inside the TUI (`d`).
 - `y` yearly view
 - `Shift+R` refetch selected day/week/month/year
 - `z` toggle weekends in rollups
+- `k` toggle vacation/non-working for selected day
 
 ## Docs
 Full documentation lives in `docs/` and is published via GitHub Pages.

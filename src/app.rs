@@ -127,6 +127,7 @@ pub struct App {
     pub rollup_day_state: ListState,
     pub rollups_include_weekends: bool,
     pub rollups_week_start: WeekStart,
+    non_working_days: HashSet<NaiveDate>,
     pub last_refresh: Option<DateTime<Local>>,
     pub show_help: bool,
     pub theme: ThemePreference,
@@ -181,6 +182,7 @@ impl App {
         let target_hours = storage::read_target_hours().unwrap_or(8.0);
         let rounding = storage::read_rounding();
         let rollup_preferences = storage::read_rollup_preferences();
+        let non_working_days = storage::read_non_working_days();
         let token_hash = token.as_ref().map(|value| storage::hash_token(value));
         let cache = token_hash
             .as_ref()
@@ -227,6 +229,7 @@ impl App {
             rollup_day_state,
             rollups_include_weekends: rollup_preferences.include_weekends,
             rollups_week_start: rollup_preferences.week_start,
+            non_working_days,
             last_refresh: None,
             show_help: false,
             theme,
@@ -694,6 +697,9 @@ impl App {
             KeyCode::Char('s') => self.enter_settings(),
             KeyCode::Char('o') | KeyCode::Char('O') => self.enter_rollups(),
             KeyCode::Char('d') => self.enter_date_input(DateInputMode::Range),
+            KeyCode::Char('k') | KeyCode::Char('K') => {
+                self.toggle_non_working_day(self.date_range.end_date());
+            }
             KeyCode::Char('u') | KeyCode::Char('U') => {
                 if self.update_info.is_some() && self.update_installable {
                     self.start_update();
@@ -760,6 +766,9 @@ impl App {
             KeyCode::Char('m') | KeyCode::Char('M') => self.set_rollup_view(RollupView::Monthly),
             KeyCode::Char('y') | KeyCode::Char('Y') => self.set_rollup_view(RollupView::Yearly),
             KeyCode::Char('z') | KeyCode::Char('Z') => self.toggle_rollup_weekends(),
+            KeyCode::Char('k') | KeyCode::Char('K') => {
+                self.toggle_non_working_day(self.rollup_toggle_day());
+            }
             KeyCode::Char('R')
                 if key.modifiers.contains(KeyModifiers::SHIFT)
                     || key.modifiers == KeyModifiers::NONE =>
@@ -1883,6 +1892,49 @@ impl App {
         }
     }
 
+    fn rollup_toggle_day(&self) -> NaiveDate {
+        let daily = self.rollup_daily_for_selected_period();
+        if let Some(index) = self.rollup_day_state.selected() {
+            if let Some(day) = daily.get(index) {
+                return day.date;
+            }
+        }
+        if let Some(first) = daily.first() {
+            return first.date;
+        }
+        self.date_range.end_date()
+    }
+
+    fn toggle_non_working_day(&mut self, day: NaiveDate) {
+        let was_marked = self.non_working_days.contains(&day);
+        if was_marked {
+            self.non_working_days.remove(&day);
+        } else {
+            self.non_working_days.insert(day);
+        }
+
+        if let Err(err) = storage::write_non_working_days(&self.non_working_days) {
+            if was_marked {
+                self.non_working_days.insert(day);
+            } else {
+                self.non_working_days.remove(&day);
+            }
+            let message = format!("Failed to save non-working days: {err}");
+            self.status = Some(message.clone());
+            self.set_toast(message, true);
+            return;
+        }
+
+        let date = day.format("%Y-%m-%d");
+        let message = if was_marked {
+            format!("Removed {date} from vacation/non-working days.")
+        } else {
+            format!("Marked {date} as vacation/non-working day.")
+        };
+        self.status = Some(message.clone());
+        self.set_toast(message, false);
+    }
+
     fn open_rollup_refetch_confirm(&mut self) {
         let Some(plan) = self.selected_rollup_refetch_plan() else {
             self.status = Some("Select a rollup period/day first.".to_string());
@@ -2059,6 +2111,14 @@ impl App {
     pub fn rollup_selected_period(&self) -> Option<&PeriodRollup> {
         let index = self.rollup_state_for_view(self.rollup_view).selected()?;
         self.rollup_periods().get(index)
+    }
+
+    pub fn non_working_days(&self) -> &HashSet<NaiveDate> {
+        &self.non_working_days
+    }
+
+    pub fn is_non_working_day(&self, day: NaiveDate) -> bool {
+        self.non_working_days.contains(&day)
     }
 
     pub fn rollup_daily_for_selected_period(&self) -> Vec<&DailyTotal> {

@@ -6,7 +6,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Block, BorderType, Borders, Cell, Clear, List, ListItem, Paragraph, Row, Table, Wrap,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::app::{
     App, DashboardFocus, DateInputMode, Mode, RollupFocus, RollupView, SettingsFocus, SettingsItem,
@@ -202,8 +202,12 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
             .iter()
             .map(|period| {
                 let hours = hours_from_seconds(period.seconds);
-                let (target, _) =
-                    period_target_hours(period, app.target_hours, app.rollups_include_weekends);
+                let (target, _) = period_target_hours(
+                    period,
+                    app.target_hours,
+                    app.rollups_include_weekends,
+                    app.non_working_days(),
+                );
                 let delta = normalize_delta(hours - target);
                 let delta_style = delta_style(delta, theme);
                 let line = Line::from(vec![
@@ -266,18 +270,25 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
 
     let summary_lines = if let Some(period) = app.rollup_selected_period() {
         let total_hours = hours_from_seconds(period.seconds);
-        let (target_hours, target_days) =
-            period_target_hours(period, app.target_hours, app.rollups_include_weekends);
+        let (target_hours, target_days) = period_target_hours(
+            period,
+            app.target_hours,
+            app.rollups_include_weekends,
+            app.non_working_days(),
+        );
         let delta = normalize_delta(total_hours - target_hours);
         let overtime = period_overtime_left_hours(
             period,
             &app.rollups.daily,
             app.target_hours,
             app.rollups_include_weekends,
+            app.non_working_days(),
             app.date_range.end_date(),
         );
-        let avg = if target_days > 0 {
-            total_hours / target_days as f64
+        let (worked_seconds, worked_days) =
+            period_worked_totals_until(period, &app.rollups.daily, app.date_range.end_date());
+        let avg = if worked_days > 0 {
+            hours_from_seconds(worked_seconds) / worked_days as f64
         } else {
             0.0
         };
@@ -299,17 +310,26 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
                 Span::raw("Overtime: "),
                 Span::styled(format!("{:.2}h", overtime), delta_style(overtime, theme)),
             ]),
-            Line::from(format!("Avg/day: {:.2}h", avg)),
+            Line::from(format!("Avg/day (worked): {:.2}h", avg)),
         ];
 
         if let Some(day) = selected_day {
             let hours = hours_from_seconds(day.seconds);
-            let day_target =
-                target_hours_for_day(day.date, app.target_hours, app.rollups_include_weekends);
+            let day_target = target_hours_for_day(
+                day.date,
+                app.target_hours,
+                app.rollups_include_weekends,
+                app.non_working_days(),
+            );
             let day_delta = normalize_delta(hours - day_target);
             let label = day.date.format("%a %Y-%m-%d").to_string();
+            let vacation = if app.is_non_working_day(day.date) {
+                " [vacation]"
+            } else {
+                ""
+            };
             lines.push(Line::from(vec![
-                Span::raw(format!("Selected: {label} ")),
+                Span::raw(format!("Selected: {label}{vacation} ")),
                 Span::styled(format!("{:.2}h", hours), theme.muted_style()),
                 Span::raw(" "),
                 Span::styled(format!("{:+.2}h", day_delta), delta_style(day_delta, theme)),
@@ -336,6 +356,7 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
             app.rollup_view,
             app.target_hours,
             app.rollups_include_weekends,
+            app.non_working_days(),
             app.rollups_week_start,
             theme,
         );
@@ -431,6 +452,8 @@ fn rollups_footer_line(app: &mut App, theme: &Theme) -> Line<'static> {
         Span::raw(" · "),
         Span::styled("z weekends", theme.muted_style()),
         Span::raw(" · "),
+        Span::styled("k vacation day", theme.muted_style()),
+        Span::raw(" · "),
         Span::styled("R refetch scope", theme.muted_style()),
         Span::raw(" · "),
         Span::styled("h help", theme.muted_style()),
@@ -456,7 +479,10 @@ fn header_line(app: &App, theme: &Theme) -> Line<'static> {
         .last_refresh
         .map(|dt| dt.format("%H:%M:%S").to_string())
         .unwrap_or_else(|| "Never".to_string());
-    Line::from(vec![
+    let active_day = app.date_range.end_date();
+    let is_non_working_day = app.is_non_working_day(active_day);
+
+    let mut spans = vec![
         Span::styled(
             format!("Timeshit v{}", update::current_version()),
             theme.title_style(),
@@ -469,11 +495,30 @@ fn header_line(app: &App, theme: &Theme) -> Line<'static> {
         Span::styled("Date", theme.muted_style()),
         Span::raw(": "),
         Span::raw(app.date_range.label().to_string()),
+    ];
+
+    if is_non_working_day {
+        spans.extend([
+            Span::raw("  "),
+            Span::styled("Day", theme.muted_style()),
+            Span::raw(": "),
+            Span::styled(
+                format!("Vacation/non-working ({})", active_day.format("%Y-%m-%d")),
+                Style::default()
+                    .fg(theme.highlight)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]);
+    }
+
+    spans.extend([
         Span::raw("  "),
         Span::styled("Last refresh", theme.muted_style()),
         Span::raw(": "),
         Span::raw(last_refresh),
-    ])
+    ]);
+
+    Line::from(spans)
 }
 
 fn footer_line(app: &mut App, theme: &Theme) -> Line<'static> {
@@ -498,6 +543,8 @@ fn footer_line(app: &mut App, theme: &Theme) -> Line<'static> {
         Span::styled("[/]", theme.muted_style()),
         Span::raw(" "),
         Span::styled("period", theme.muted_style()),
+        Span::raw(" · "),
+        Span::styled("k vacation day", theme.muted_style()),
         Span::raw(" · "),
         Span::styled("s settings", theme.muted_style()),
         Span::raw(" · "),
@@ -746,12 +793,14 @@ fn period_target_hours(
     period: &PeriodRollup,
     target_hours: f64,
     include_weekends: bool,
+    non_working_days: &HashSet<NaiveDate>,
 ) -> (f64, usize) {
     let mut days = 0usize;
     let mut total = 0.0;
     let mut current = period.start;
     while current <= period.end {
-        let target = target_hours_for_day(current, target_hours, include_weekends);
+        let target =
+            target_hours_for_day(current, target_hours, include_weekends, non_working_days);
         if target > 0.0 {
             days += 1;
         }
@@ -766,6 +815,7 @@ fn period_overtime_left_hours(
     daily: &[DailyTotal],
     target_hours: f64,
     include_weekends: bool,
+    non_working_days: &HashSet<NaiveDate>,
     active_end: NaiveDate,
 ) -> f64 {
     let cutoff = period.end.min(active_end);
@@ -779,7 +829,13 @@ fn period_overtime_left_hours(
         .fold((0i64, 0.0f64), |(worked, target), day| {
             (
                 worked + day.seconds,
-                target + target_hours_for_day(day.date, target_hours, include_weekends),
+                target
+                    + target_hours_for_day(
+                        day.date,
+                        target_hours,
+                        include_weekends,
+                        non_working_days,
+                    ),
             )
         });
 
@@ -787,7 +843,37 @@ fn period_overtime_left_hours(
     if overtime > 0.0 { overtime } else { 0.0 }
 }
 
-fn target_hours_for_day(day: NaiveDate, target_hours: f64, include_weekends: bool) -> f64 {
+fn period_worked_totals_until(
+    period: &PeriodRollup,
+    daily: &[DailyTotal],
+    active_end: NaiveDate,
+) -> (i64, usize) {
+    let cutoff = period.end.min(active_end);
+    if cutoff < period.start {
+        return (0, 0);
+    }
+
+    daily
+        .iter()
+        .filter(|day| day.date >= period.start && day.date <= cutoff)
+        .fold((0i64, 0usize), |(worked_seconds, worked_days), day| {
+            if day.seconds > 0 {
+                (worked_seconds + day.seconds, worked_days + 1)
+            } else {
+                (worked_seconds, worked_days)
+            }
+        })
+}
+
+fn target_hours_for_day(
+    day: NaiveDate,
+    target_hours: f64,
+    include_weekends: bool,
+    non_working_days: &HashSet<NaiveDate>,
+) -> f64 {
+    if non_working_days.contains(&day) {
+        return 0.0;
+    }
     if include_weekends || day.weekday().number_from_monday() <= 5 {
         target_hours
     } else {
@@ -808,6 +894,7 @@ fn build_calendar_lines(
     rollup_view: RollupView,
     target_hours: f64,
     include_weekends: bool,
+    non_working_days: &HashSet<NaiveDate>,
     week_start: WeekStart,
     theme: &Theme,
 ) -> CalendarRender {
@@ -819,6 +906,7 @@ fn build_calendar_lines(
             focus,
             target_hours,
             include_weekends,
+            non_working_days,
             week_start,
             theme,
         )
@@ -830,6 +918,7 @@ fn build_calendar_lines(
             focus,
             target_hours,
             include_weekends,
+            non_working_days,
             week_start,
             theme,
         )
@@ -843,6 +932,7 @@ fn build_period_calendar_grid_lines(
     focus: RollupFocus,
     target_hours: f64,
     include_weekends: bool,
+    non_working_days: &HashSet<NaiveDate>,
     week_start: WeekStart,
     theme: &Theme,
 ) -> CalendarRender {
@@ -964,7 +1054,13 @@ fn build_period_calendar_grid_lines(
                     let seconds = *map.get(date).unwrap_or(&0);
                     let hours = hours_from_seconds(seconds);
                     let delta = normalize_delta(
-                        hours - target_hours_for_day(*date, target_hours, include_weekends),
+                        hours
+                            - target_hours_for_day(
+                                *date,
+                                target_hours,
+                                include_weekends,
+                                non_working_days,
+                            ),
                     );
                     let mut style = delta_style(delta, theme).add_modifier(Modifier::BOLD);
                     if *date == today {
@@ -983,14 +1079,12 @@ fn build_period_calendar_grid_lines(
                     if *date == today {
                         style = style.add_modifier(Modifier::UNDERLINED);
                     }
-                    day_values.push((
-                        format!(
-                            "{:^width$}",
-                            format!("{:02}", date.day()),
-                            width = cell_width
-                        ),
-                        style,
-                    ));
+                    let day_label = if non_working_days.contains(date) {
+                        format!("{:02}V", date.day())
+                    } else {
+                        format!("{:02}", date.day())
+                    };
+                    day_values.push((format!("{:^width$}", day_label, width = cell_width), style));
                     hour_values.push((
                         format!("{:^width$}", format!("{:.2}h", hours), width = cell_width),
                         style,
@@ -1033,6 +1127,7 @@ fn build_yearly_calendar_lines(
     focus: RollupFocus,
     target_hours: f64,
     include_weekends: bool,
+    non_working_days: &HashSet<NaiveDate>,
     week_start: WeekStart,
     theme: &Theme,
 ) -> CalendarRender {
@@ -1076,6 +1171,7 @@ fn build_yearly_calendar_lines(
                 focus,
                 target_hours,
                 include_weekends,
+                non_working_days,
                 week_start,
                 theme,
             );
@@ -1206,6 +1302,10 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
             Cell::from("Set date range"),
         ]),
         Row::new(vec![
+            Cell::from(Span::styled("k", key_style)),
+            Cell::from("Toggle vacation/non-working for active day"),
+        ]),
+        Row::new(vec![
             Cell::from(Span::styled("[ / ]", key_style)),
             Cell::from("Previous / next active date range"),
         ]),
@@ -1229,6 +1329,10 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
         Row::new(vec![
             Cell::from(Span::styled("z", key_style)),
             Cell::from("Toggle weekends in rollups"),
+        ]),
+        Row::new(vec![
+            Cell::from(Span::styled("k", key_style)),
+            Cell::from("Toggle vacation/non-working for selected day"),
         ]),
         Row::new(vec![
             Cell::from(Span::styled("Shift+R", key_style)),
