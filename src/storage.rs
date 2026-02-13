@@ -1,7 +1,7 @@
-use chrono::Local;
+use chrono::{Local, NaiveDate};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::io;
@@ -92,6 +92,8 @@ struct Config {
     rounding: Option<RoundingConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     rollup_preferences: Option<RollupPreferences>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    non_working_days: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -147,6 +149,34 @@ pub fn write_rollup_preferences(value: RollupPreferences) -> Result<(), io::Erro
     let mut config = read_config().unwrap_or_default();
     config.rollup_preferences = Some(value);
     write_config(&config)
+}
+
+pub fn read_non_working_days() -> HashSet<NaiveDate> {
+    read_config()
+        .map(|config| parse_non_working_days(&config.non_working_days))
+        .unwrap_or_default()
+}
+
+pub fn write_non_working_days(value: &HashSet<NaiveDate>) -> Result<(), io::Error> {
+    let mut config = read_config().unwrap_or_default();
+    config.non_working_days = format_non_working_days(value);
+    write_config(&config)
+}
+
+fn parse_non_working_days(values: &[String]) -> HashSet<NaiveDate> {
+    values
+        .iter()
+        .filter_map(|value| NaiveDate::parse_from_str(value, "%Y-%m-%d").ok())
+        .collect()
+}
+
+fn format_non_working_days(values: &HashSet<NaiveDate>) -> Vec<String> {
+    let mut encoded = values
+        .iter()
+        .map(|day| day.format("%Y-%m-%d").to_string())
+        .collect::<Vec<_>>();
+    encoded.sort();
+    encoded
 }
 
 fn read_config() -> Option<Config> {
@@ -292,5 +322,27 @@ mod tests {
         normalize_quota(&mut quota, "2026-02-03");
         assert_eq!(quota.used_calls, 0);
         assert_eq!(quota.date, "2026-02-03");
+    }
+
+    #[test]
+    fn parse_non_working_days_skips_invalid_values() {
+        let values = vec![
+            "2026-02-10".to_string(),
+            "invalid".to_string(),
+            "2026-02-11".to_string(),
+        ];
+        let parsed = parse_non_working_days(&values);
+        assert_eq!(parsed.len(), 2);
+        assert!(parsed.contains(&NaiveDate::from_ymd_opt(2026, 2, 10).unwrap()));
+        assert!(parsed.contains(&NaiveDate::from_ymd_opt(2026, 2, 11).unwrap()));
+    }
+
+    #[test]
+    fn format_non_working_days_is_sorted() {
+        let mut values = HashSet::new();
+        values.insert(NaiveDate::from_ymd_opt(2026, 2, 12).unwrap());
+        values.insert(NaiveDate::from_ymd_opt(2026, 2, 10).unwrap());
+        let encoded = format_non_working_days(&values);
+        assert_eq!(encoded, vec!["2026-02-10", "2026-02-12"]);
     }
 }
