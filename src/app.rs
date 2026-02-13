@@ -697,6 +697,9 @@ impl App {
             KeyCode::Char('s') => self.enter_settings(),
             KeyCode::Char('o') | KeyCode::Char('O') => self.enter_rollups(),
             KeyCode::Char('d') => self.enter_date_input(DateInputMode::Range),
+            KeyCode::Char('k') | KeyCode::Char('K') => {
+                self.toggle_non_working_day(self.date_range.end_date());
+            }
             KeyCode::Char('u') | KeyCode::Char('U') => {
                 if self.update_info.is_some() && self.update_installable {
                     self.start_update();
@@ -763,6 +766,9 @@ impl App {
             KeyCode::Char('m') | KeyCode::Char('M') => self.set_rollup_view(RollupView::Monthly),
             KeyCode::Char('y') | KeyCode::Char('Y') => self.set_rollup_view(RollupView::Yearly),
             KeyCode::Char('z') | KeyCode::Char('Z') => self.toggle_rollup_weekends(),
+            KeyCode::Char('k') | KeyCode::Char('K') => {
+                self.toggle_non_working_day(self.rollup_toggle_day());
+            }
             KeyCode::Char('R')
                 if key.modifiers.contains(KeyModifiers::SHIFT)
                     || key.modifiers == KeyModifiers::NONE =>

@@ -452,6 +452,8 @@ fn rollups_footer_line(app: &mut App, theme: &Theme) -> Line<'static> {
         Span::raw(" · "),
         Span::styled("z weekends", theme.muted_style()),
         Span::raw(" · "),
+        Span::styled("k vacation day", theme.muted_style()),
+        Span::raw(" · "),
         Span::styled("R refetch scope", theme.muted_style()),
         Span::raw(" · "),
         Span::styled("h help", theme.muted_style()),
@@ -477,7 +479,10 @@ fn header_line(app: &App, theme: &Theme) -> Line<'static> {
         .last_refresh
         .map(|dt| dt.format("%H:%M:%S").to_string())
         .unwrap_or_else(|| "Never".to_string());
-    Line::from(vec![
+    let active_day = app.date_range.end_date();
+    let is_non_working_day = app.is_non_working_day(active_day);
+
+    let mut spans = vec![
         Span::styled(
             format!("Timeshit v{}", update::current_version()),
             theme.title_style(),
@@ -490,11 +495,30 @@ fn header_line(app: &App, theme: &Theme) -> Line<'static> {
         Span::styled("Date", theme.muted_style()),
         Span::raw(": "),
         Span::raw(app.date_range.label().to_string()),
+    ];
+
+    if is_non_working_day {
+        spans.extend([
+            Span::raw("  "),
+            Span::styled("Day", theme.muted_style()),
+            Span::raw(": "),
+            Span::styled(
+                format!("Vacation/non-working ({})", active_day.format("%Y-%m-%d")),
+                Style::default()
+                    .fg(theme.highlight)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]);
+    }
+
+    spans.extend([
         Span::raw("  "),
         Span::styled("Last refresh", theme.muted_style()),
         Span::raw(": "),
         Span::raw(last_refresh),
-    ])
+    ]);
+
+    Line::from(spans)
 }
 
 fn footer_line(app: &mut App, theme: &Theme) -> Line<'static> {
@@ -519,6 +543,8 @@ fn footer_line(app: &mut App, theme: &Theme) -> Line<'static> {
         Span::styled("[/]", theme.muted_style()),
         Span::raw(" "),
         Span::styled("period", theme.muted_style()),
+        Span::raw(" · "),
+        Span::styled("k vacation day", theme.muted_style()),
         Span::raw(" · "),
         Span::styled("s settings", theme.muted_style()),
         Span::raw(" · "),
