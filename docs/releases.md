@@ -15,12 +15,14 @@ Workflow file:
 
 ## What Happens
 - The workflow updates `Cargo.toml` + `Cargo.lock` on `main` to the release version.
+- The workflow generates/updates `CHANGELOG.md` for `v<version>` from commits since the previous release tag.
+- The version bump and changelog update are committed together in one commit.
+- Release creation is gated by changelog validation for that version.
 - A git tag `v<version>` is created and pushed.
 - Builds release binaries for **Linux, macOS, Windows**.
 - Creates a GitHub Release with tag `v<version>`.
 - Auto-generates release notes from merged PRs and commits.
 - Attaches packaged binaries to the release.
-- A separate workflow updates `CHANGELOG.md` from the release notes.
 
 ## Release Assets
 The workflow publishes:

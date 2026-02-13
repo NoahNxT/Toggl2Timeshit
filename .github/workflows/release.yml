@@ -63,6 +63,118 @@ jobs:
               f.writelines(out)
           PY
 
+      - name: Update changelog
+        shell: bash
+        env:
+          VERSION: ${{ steps.set_tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          VERSION="${VERSION}" python3 - <<'PY'
+          import datetime
+          import os
+          import re
+          import subprocess
+          from pathlib import Path
+
+          version = os.environ["VERSION"]
+          today = datetime.date.today().isoformat()
+          changelog = Path("CHANGELOG.md")
+
+          if not changelog.exists():
+              changelog.write_text(
+                  "\n".join(
+                      [
+                          "# Changelog",
+                          "",
+                          "All notable changes to this project will be documented in this file.",
+                          "This file is auto-updated by the release workflow.",
+                          "",
+                          "## Unreleased",
+                          "",
+                          "- Work in progress.",
+                          "",
+                      ]
+                  ),
+                  encoding="utf-8",
+              )
+
+          text = changelog.read_text(encoding="utf-8")
+          lines = text.splitlines()
+
+          all_tags = (
+              subprocess.check_output(
+                  ["git", "tag", "--list", "v*", "--sort=-v:refname"], text=True
+              )
+              .strip()
+              .splitlines()
+          )
+          current_tag = f"v{version}"
+          previous_tag = next((tag for tag in all_tags if tag != current_tag), None)
+          range_spec = "HEAD" if previous_tag is None else f"{previous_tag}..HEAD"
+
+          commits = (
+              subprocess.check_output(
+                  ["git", "log", "--no-merges", "--pretty=format:%s", range_spec], text=True
+              )
+              .strip()
+              .splitlines()
+          )
+          messages = []
+          for subject in commits:
+              subject = subject.strip()
+              if not subject:
+                  continue
+              if "bump version to v" in subject.lower():
+                  continue
+              messages.append(subject)
+          if not messages:
+              messages = ["Internal maintenance updates."]
+          notes = [f"- {subject}" for subject in messages]
+
+          version_header_pattern = re.compile(
+              rf"^## v{re.escape(version)} - \d{{4}}-\d{{2}}-\d{{2}}$"
+          )
+          cleaned = []
+          index = 0
+          while index < len(lines):
+              if version_header_pattern.match(lines[index].strip()):
+                  index += 1
+                  while index < len(lines) and not lines[index].startswith("## "):
+                      index += 1
+                  continue
+              cleaned.append(lines[index])
+              index += 1
+          lines = cleaned
+
+          if not any(line.strip() == "## Unreleased" for line in lines):
+              if lines and lines[-1].strip():
+                  lines.append("")
+              lines.extend(["## Unreleased", "", "- Work in progress.", ""])
+
+          insert_at = len(lines)
+          for i, line in enumerate(lines):
+              if line.strip() == "## Unreleased":
+                  j = i + 1
+                  while j < len(lines) and not lines[j].startswith("## "):
+                      j += 1
+                  insert_at = j
+                  break
+
+          section = [f"## v{version} - {today}", "", *notes, ""]
+          lines = lines[:insert_at] + section + lines[insert_at:]
+
+          changelog.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+          PY
+
+      - name: Verify changelog entry
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! grep -Eq "^## v${{ steps.set_tag.outputs.version }} - [0-9]{4}-[0-9]{2}-[0-9]{2}$" CHANGELOG.md; then
+            echo "CHANGELOG.md is missing an entry for v${{ steps.set_tag.outputs.version }}."
+            exit 1
+          fi
+
       - name: Commit and tag
         shell: bash
         run: |
@@ -70,9 +182,9 @@ jobs:
           git fetch --tags
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
-          git add Cargo.toml Cargo.lock packaging/chocolatey/timeshit.nuspec
+          git add Cargo.toml Cargo.lock packaging/chocolatey/timeshit.nuspec CHANGELOG.md
           if ! git diff --cached --quiet; then
-            git commit -m "🔖 bump version to v${{ steps.set_tag.outputs.version }}"
+            git commit -m "🔖 bump version to v${{ steps.set_tag.outputs.version }} and update changelog"
           fi
           if git rev-parse "v${{ steps.set_tag.outputs.version }}" >/dev/null 2>&1; then
             echo "Tag v${{ steps.set_tag.outputs.version }} already exists."
@@ -129,10 +241,21 @@ jobs:
     runs-on: ubuntu-22.04
     needs: [prepare, build]
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.release_tag }}
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           path: dist
+      - name: Verify changelog is up to date
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! grep -Eq "^## v${{ needs.prepare.outputs.version }} - [0-9]{4}-[0-9]{2}-[0-9]{2}$" CHANGELOG.md; then
+            echo "Release blocked: CHANGELOG.md is not up to date for v${{ needs.prepare.outputs.version }}."
+            exit 1
+          fi
       - name: Create GitHub release
         uses: softprops/action-gh-release@v1
         with:
