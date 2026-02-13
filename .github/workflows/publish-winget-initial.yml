@@ -46,8 +46,9 @@ jobs:
         run: |
           $tag = $env:RELEASE_TAG
           $url = "https://github.com/${{ github.repository }}/releases/download/$tag/timeshit-windows.zip"
-          Invoke-WebRequest -Uri $url -OutFile timeshit-windows.zip
-          $sha = (Get-FileHash timeshit-windows.zip -Algorithm SHA256).Hash.ToLower()
+          $assetPath = Join-Path $env:RUNNER_TEMP "timeshit-windows.zip"
+          Invoke-WebRequest -Uri $url -OutFile $assetPath
+          $sha = (Get-FileHash $assetPath -Algorithm SHA256).Hash.ToLower()
           "INSTALLER_SHA=$sha" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Generate Winget manifest
@@ -132,3 +133,5 @@ jobs:
             - Release: `${{ env.RELEASE_TAG }}`
           branch: "winget-${{ env.RELEASE_TAG }}"
           push-to-fork: "${{ github.repository_owner }}/winget-pkgs"
+          add-paths: |
+            manifests/**/*.yaml
