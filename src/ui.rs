@@ -255,7 +255,7 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
 
     let right_sections = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(8), Constraint::Min(0)])
+        .constraints([Constraint::Length(9), Constraint::Min(0)])
         .split(body[1]);
 
     let daily = app.rollup_daily_for_selected_period();
@@ -269,6 +269,13 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
         let (target_hours, target_days) =
             period_target_hours(period, app.target_hours, app.rollups_include_weekends);
         let delta = normalize_delta(total_hours - target_hours);
+        let overtime = period_overtime_left_hours(
+            period,
+            &app.rollups.daily,
+            app.target_hours,
+            app.rollups_include_weekends,
+            app.date_range.end_date(),
+        );
         let avg = if target_days > 0 {
             total_hours / target_days as f64
         } else {
@@ -287,6 +294,10 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
             Line::from(vec![
                 Span::raw("Delta: "),
                 Span::styled(format!("{:+.2}h", delta), delta_style(delta, theme)),
+            ]),
+            Line::from(vec![
+                Span::raw("Overtime: "),
+                Span::styled(format!("{:.2}h", overtime), delta_style(overtime, theme)),
             ]),
             Line::from(format!("Avg/day: {:.2}h", avg)),
         ];
@@ -748,6 +759,32 @@ fn period_target_hours(
         current = current.succ_opt().unwrap_or(current + Duration::days(1));
     }
     (total, days)
+}
+
+fn period_overtime_left_hours(
+    period: &PeriodRollup,
+    daily: &[DailyTotal],
+    target_hours: f64,
+    include_weekends: bool,
+    active_end: NaiveDate,
+) -> f64 {
+    let cutoff = period.end.min(active_end);
+    if cutoff < period.start {
+        return 0.0;
+    }
+
+    let (worked_seconds, target_total) = daily
+        .iter()
+        .filter(|day| day.date >= period.start && day.date <= cutoff)
+        .fold((0i64, 0.0f64), |(worked, target), day| {
+            (
+                worked + day.seconds,
+                target + target_hours_for_day(day.date, target_hours, include_weekends),
+            )
+        });
+
+    let overtime = normalize_delta(hours_from_seconds(worked_seconds) - target_total);
+    if overtime > 0.0 { overtime } else { 0.0 }
 }
 
 fn target_hours_for_day(day: NaiveDate, target_hours: f64, include_weekends: bool) -> f64 {
