@@ -1,7 +1,7 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
-This file is auto-updated from GitHub Release notes.
+This file is auto-updated by the release workflow.
 
 ## Unreleased
 
