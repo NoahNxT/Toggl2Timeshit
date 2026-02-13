@@ -1302,6 +1302,10 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
             Cell::from("Set date range"),
         ]),
         Row::new(vec![
+            Cell::from(Span::styled("k", key_style)),
+            Cell::from("Toggle vacation/non-working for active day"),
+        ]),
+        Row::new(vec![
             Cell::from(Span::styled("[ / ]", key_style)),
             Cell::from("Previous / next active date range"),
         ]),
@@ -1325,6 +1329,10 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
         Row::new(vec![
             Cell::from(Span::styled("z", key_style)),
             Cell::from("Toggle weekends in rollups"),
+        ]),
+        Row::new(vec![
+            Cell::from(Span::styled("k", key_style)),
+            Cell::from("Toggle vacation/non-working for selected day"),
         ]),
         Row::new(vec![
             Cell::from(Span::styled("Shift+R", key_style)),
