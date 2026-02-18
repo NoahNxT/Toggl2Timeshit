@@ -1,0 +1,116 @@
+name: Verify Windows Version + ARP
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v1.8.0)"
+        required: true
+        type: string
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: windows-latest
+    steps:
+      - name: Resolve tag/version
+        id: meta
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "release") {
+            $tag = "${{ github.event.release.tag_name }}"
+          } else {
+            $tag = "${{ inputs.tag }}"
+          }
+          if (-not $tag.StartsWith("v")) { $tag = "v$tag" }
+          $version = $tag.TrimStart("v")
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "version=$version" >> $env:GITHUB_OUTPUT
+          Write-Host "Tag: $tag  Version: $version"
+
+      - name: Download release zip
+        shell: pwsh
+        run: |
+          $url = "https://github.com/${{ github.repository }}/releases/download/${{ steps.meta.outputs.tag }}/timeshit-windows.zip"
+          Invoke-WebRequest -Uri $url -OutFile timeshit-windows.zip
+          Expand-Archive timeshit-windows.zip -DestinationPath .\bin -Force
+
+      - name: Check exe --version
+        shell: pwsh
+        run: |
+          $expected = "${{ steps.meta.outputs.version }}"
+          $raw = & .\bin\timeshit.exe --version
+          Write-Host "CLI: $raw"
+          if ($raw -notmatch 'timeshit\s+([^\s]+)') { throw "Could not parse version from '$raw'" }
+          $actual = $Matches[1]
+          if ($actual -ne $expected) {
+            throw "timeshit.exe version mismatch. expected=$expected actual=$actual"
+          }
+
+      - name: Build temporary winget manifest
+        shell: pwsh
+        run: |
+          $version = "${{ steps.meta.outputs.version }}"
+          $tag = "${{ steps.meta.outputs.tag }}"
+          $hash = (Get-FileHash timeshit-windows.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          New-Item -ItemType Directory -Path .\manifests -Force | Out-Null
+
+          @"
+          PackageIdentifier: NxTSolutions.Timeshit
+          PackageVersion: $version
+          DefaultLocale: en-US
+          ManifestType: version
+          ManifestVersion: 1.6.0
+          "@ | Set-Content .\manifests\NxTSolutions.Timeshit.yaml -Encoding utf8
+
+          @"
+          PackageIdentifier: NxTSolutions.Timeshit
+          PackageVersion: $version
+          PackageLocale: en-US
+          Publisher: NxTSolutions
+          PackageName: Timeshit
+          License: MIT
+          ShortDescription: Toggl Track to timesheet TUI
+          ManifestType: defaultLocale
+          ManifestVersion: 1.6.0
+          "@ | Set-Content .\manifests\NxTSolutions.Timeshit.locale.en-US.yaml -Encoding utf8
+
+          @"
+          PackageIdentifier: NxTSolutions.Timeshit
+          PackageVersion: $version
+          InstallerType: zip
+          Installers:
+            - Architecture: x64
+              InstallerUrl: https://github.com/${{ github.repository }}/releases/download/$tag/timeshit-windows.zip
+              InstallerSha256: $hash
+              NestedInstallerType: portable
+              NestedInstallerFiles:
+                - RelativeFilePath: timeshit.exe
+                  PortableCommandAlias: timeshit
+          ManifestType: installer
+          ManifestVersion: 1.6.0
+          "@ | Set-Content .\manifests\NxTSolutions.Timeshit.installer.yaml -Encoding utf8
+
+      - name: Install from local manifest
+        shell: pwsh
+        run: |
+          winget install --manifest .\manifests --scope user --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
+
+      - name: Check ARP DisplayVersion
+        shell: pwsh
+        run: |
+          $expected = "${{ steps.meta.outputs.version }}"
+          $arp = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' |
+            Where-Object { $_.DisplayName -eq 'Timeshit' } |
+            Select-Object -First 1 DisplayName, DisplayVersion, Publisher, PSChildName
+
+          if (-not $arp) { throw "No ARP entry found for Timeshit." }
+
+          $arp | Format-List
+          if ($arp.DisplayVersion -ne $expected) {
+            throw "ARP DisplayVersion mismatch. expected=$expected actual=$($arp.DisplayVersion)"
+          }
