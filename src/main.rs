@@ -24,6 +24,13 @@ use app::App;
 use dates::DateRange;
 
 fn main() -> Result<(), Box<dyn Error>> {
+    if let Some(arg1) = std::env::args().nth(1) {
+        if arg1 == "--version" || arg1 == "-V" {
+            println!("timeshit {}", env!("CARGO_PKG_VERSION"));
+            return Ok(());
+        }
+    }
+
     let date_range = DateRange::today();
     let force_login = false;
 
