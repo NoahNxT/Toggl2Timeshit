@@ -1,6 +1,6 @@
 [package]
 name = "timeshit"
-version = "1.8.0"
+version = "1.8.1"
 edition = "2024"
 description = "Toggl Track to timesheet TUI"
 license = "MIT"

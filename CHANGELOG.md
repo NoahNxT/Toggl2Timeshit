@@ -6,6 +6,16 @@ This file is auto-updated by the release workflow.
 ## Unreleased
 
 - Work in progress.
+## v1.8.1 - 2026-02-23
+
+- :arrow_up: Updates version and README
+- 📝 Update Windows installation instructions in README
+- ⬆️ Updates dependencies in Cargo.lock
+- Bump zip from 7.4.0 to 8.1.0
+- :sparkles: Adds version flag
+- ✨ Adds Windows version verification workflow
+- :wrench: Improves Winget manifest generation
+
 ## v1.8.0 - 2026-02-13
 
 - 📝 docs: Update release process documentation
