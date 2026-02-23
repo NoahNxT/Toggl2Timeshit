@@ -45,6 +45,12 @@ jobs:
           nuspec = re.sub(r"<version>[^<]*</version>", f"<version>{version}</version>", nuspec, count=1)
           with open("packaging/chocolatey/timeshit.nuspec", "w", encoding="utf-8") as f:
               f.write(nuspec)
+          # Update README install examples with explicit version numbers
+          with open("README.md", "r", encoding="utf-8") as f:
+              readme = f.read()
+          readme = re.sub(r"(--version=)\d+\.\d+\.\d+", rf"\g<1>{version}", readme)
+          with open("README.md", "w", encoding="utf-8") as f:
+              f.write(readme)
           # Update Cargo.lock package version entry
           with open("Cargo.lock", "r", encoding="utf-8") as f:
               lines = f.readlines()
@@ -182,7 +188,7 @@ jobs:
           git fetch --tags
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
-          git add Cargo.toml Cargo.lock packaging/chocolatey/timeshit.nuspec CHANGELOG.md
+          git add Cargo.toml Cargo.lock packaging/chocolatey/timeshit.nuspec README.md CHANGELOG.md
           if ! git diff --cached --quiet; then
             git commit -m "🔖 bump version to v${{ steps.set_tag.outputs.version }} and update changelog"
           fi
