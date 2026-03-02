@@ -32,6 +32,16 @@ Settings are organized into categories (left column) and items (right column).
 ### How rounding is applied
 Rounding is applied to each **grouped entry line** (per description). Project totals and overall totals are computed as the **sum of rounded entry lines**.
 
+## Rollups
+- **Include weekends**  
+  Whether weekends are part of rollup targeting and navigation.
+- **Week start**  
+  Monday or Sunday for weekly grouping/calendar.
+- **Vacation day hours**  
+  Target hours counted for days marked as vacation (`k` shortcut).
+- **Sick day hours**  
+  Target hours counted for days marked as sick (`j` shortcut).
+
 ## Integrations
 - **Toggl token**  
   Update the API token from inside the app. The token is stored at:
