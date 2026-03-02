@@ -17,7 +17,8 @@
 - `t`: Today
 - `y`: Yesterday
 - `d`: Open date range modal
-- `k`: Toggle vacation/non-working for active day
+- `k`: Toggle vacation day for active day
+- `j`: Toggle sick day for active day
 - `[` / `]`: Shift current active date range backward/forward
 - `Tab`: Switch between start/end in date range modal
 
@@ -29,7 +30,8 @@
 - `Tab`: Switch focus between periods and days
 - `Up/Down`: Navigate periods or days
 - `Left/Right`: Move one step in period/day lists
-- `k`: Toggle vacation/non-working for selected day
+- `k`: Toggle vacation day for selected day
+- `j`: Toggle sick day for selected day
 - `Shift+R`: Refetch selected day/week/month/year from Toggl API
 - `Esc`: Back to dashboard
 

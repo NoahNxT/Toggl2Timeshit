@@ -206,7 +206,10 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
                     period,
                     app.target_hours,
                     app.rollups_include_weekends,
-                    app.non_working_days(),
+                    app.vacation_days(),
+                    app.sick_days(),
+                    app.vacation_day_hours(),
+                    app.sick_day_hours(),
                 );
                 let delta = normalize_delta(hours - target);
                 let delta_style = delta_style(delta, theme);
@@ -274,7 +277,10 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
             period,
             app.target_hours,
             app.rollups_include_weekends,
-            app.non_working_days(),
+            app.vacation_days(),
+            app.sick_days(),
+            app.vacation_day_hours(),
+            app.sick_day_hours(),
         );
         let delta = normalize_delta(total_hours - target_hours);
         let overtime = period_overtime_left_hours(
@@ -282,7 +288,10 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
             &app.rollups.daily,
             app.target_hours,
             app.rollups_include_weekends,
-            app.non_working_days(),
+            app.vacation_days(),
+            app.sick_days(),
+            app.vacation_day_hours(),
+            app.sick_day_hours(),
             app.date_range.end_date(),
         );
         let (worked_seconds, worked_days) =
@@ -299,8 +308,8 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
             )),
             Line::from(format!("Total: {:.2}h", total_hours)),
             Line::from(format!(
-                "Target: {:.2}h ({} days × {:.2})",
-                target_hours, target_days, app.target_hours
+                "Target: {:.2}h ({} target days)",
+                target_hours, target_days
             )),
             Line::from(vec![
                 Span::raw("Delta: "),
@@ -319,17 +328,16 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
                 day.date,
                 app.target_hours,
                 app.rollups_include_weekends,
-                app.non_working_days(),
+                app.vacation_days(),
+                app.sick_days(),
+                app.vacation_day_hours(),
+                app.sick_day_hours(),
             );
             let day_delta = normalize_delta(hours - day_target);
             let label = day.date.format("%a %Y-%m-%d").to_string();
-            let vacation = if app.is_non_working_day(day.date) {
-                " [vacation]"
-            } else {
-                ""
-            };
+            let special = special_day_suffix(app, day.date);
             lines.push(Line::from(vec![
-                Span::raw(format!("Selected: {label}{vacation} ")),
+                Span::raw(format!("Selected: {label}{special} ")),
                 Span::styled(format!("{:.2}h", hours), theme.muted_style()),
                 Span::raw(" "),
                 Span::styled(format!("{:+.2}h", day_delta), delta_style(day_delta, theme)),
@@ -356,7 +364,10 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
             app.rollup_view,
             app.target_hours,
             app.rollups_include_weekends,
-            app.non_working_days(),
+            app.vacation_days(),
+            app.sick_days(),
+            app.vacation_day_hours(),
+            app.sick_day_hours(),
             app.rollups_week_start,
             theme,
         );
@@ -454,6 +465,8 @@ fn rollups_footer_line(app: &mut App, theme: &Theme) -> Line<'static> {
         Span::raw(" · "),
         Span::styled("k vacation day", theme.muted_style()),
         Span::raw(" · "),
+        Span::styled("j sick day", theme.muted_style()),
+        Span::raw(" · "),
         Span::styled("R refetch scope", theme.muted_style()),
         Span::raw(" · "),
         Span::styled("h help", theme.muted_style()),
@@ -480,7 +493,13 @@ fn header_line(app: &App, theme: &Theme) -> Line<'static> {
         .map(|dt| dt.format("%H:%M:%S").to_string())
         .unwrap_or_else(|| "Never".to_string());
     let active_day = app.date_range.end_date();
-    let is_non_working_day = app.is_non_working_day(active_day);
+    let special_day = if app.is_vacation_day(active_day) {
+        Some(format!("Vacation ({:.2}h)", app.vacation_day_hours()))
+    } else if app.is_sick_day(active_day) {
+        Some(format!("Sick ({:.2}h)", app.sick_day_hours()))
+    } else {
+        None
+    };
 
     let mut spans = vec![
         Span::styled(
@@ -497,13 +516,13 @@ fn header_line(app: &App, theme: &Theme) -> Line<'static> {
         Span::raw(app.date_range.label().to_string()),
     ];
 
-    if is_non_working_day {
+    if let Some(day_label) = special_day {
         spans.extend([
             Span::raw("  "),
             Span::styled("Day", theme.muted_style()),
             Span::raw(": "),
             Span::styled(
-                format!("Vacation/non-working ({})", active_day.format("%Y-%m-%d")),
+                format!("{day_label} ({})", active_day.format("%Y-%m-%d")),
                 Style::default()
                     .fg(theme.highlight)
                     .add_modifier(Modifier::BOLD),
@@ -545,6 +564,8 @@ fn footer_line(app: &mut App, theme: &Theme) -> Line<'static> {
         Span::styled("period", theme.muted_style()),
         Span::raw(" · "),
         Span::styled("k vacation day", theme.muted_style()),
+        Span::raw(" · "),
+        Span::styled("j sick day", theme.muted_style()),
         Span::raw(" · "),
         Span::styled("s settings", theme.muted_style()),
         Span::raw(" · "),
@@ -789,18 +810,38 @@ fn delta_style(value: f64, theme: &Theme) -> Style {
     }
 }
 
+fn special_day_suffix(app: &App, day: NaiveDate) -> String {
+    if app.is_sick_day(day) {
+        return format!(" [sick {:.2}h]", app.sick_day_hours());
+    }
+    if app.is_vacation_day(day) {
+        return format!(" [vacation {:.2}h]", app.vacation_day_hours());
+    }
+    String::new()
+}
+
 fn period_target_hours(
     period: &PeriodRollup,
     target_hours: f64,
     include_weekends: bool,
-    non_working_days: &HashSet<NaiveDate>,
+    vacation_days: &HashSet<NaiveDate>,
+    sick_days: &HashSet<NaiveDate>,
+    vacation_day_hours: f64,
+    sick_day_hours: f64,
 ) -> (f64, usize) {
     let mut days = 0usize;
     let mut total = 0.0;
     let mut current = period.start;
     while current <= period.end {
-        let target =
-            target_hours_for_day(current, target_hours, include_weekends, non_working_days);
+        let target = target_hours_for_day(
+            current,
+            target_hours,
+            include_weekends,
+            vacation_days,
+            sick_days,
+            vacation_day_hours,
+            sick_day_hours,
+        );
         if target > 0.0 {
             days += 1;
         }
@@ -815,7 +856,10 @@ fn period_overtime_left_hours(
     daily: &[DailyTotal],
     target_hours: f64,
     include_weekends: bool,
-    non_working_days: &HashSet<NaiveDate>,
+    vacation_days: &HashSet<NaiveDate>,
+    sick_days: &HashSet<NaiveDate>,
+    vacation_day_hours: f64,
+    sick_day_hours: f64,
     active_end: NaiveDate,
 ) -> f64 {
     let cutoff = period.end.min(active_end);
@@ -834,7 +878,10 @@ fn period_overtime_left_hours(
                         day.date,
                         target_hours,
                         include_weekends,
-                        non_working_days,
+                        vacation_days,
+                        sick_days,
+                        vacation_day_hours,
+                        sick_day_hours,
                     ),
             )
         });
@@ -869,10 +916,16 @@ fn target_hours_for_day(
     day: NaiveDate,
     target_hours: f64,
     include_weekends: bool,
-    non_working_days: &HashSet<NaiveDate>,
+    vacation_days: &HashSet<NaiveDate>,
+    sick_days: &HashSet<NaiveDate>,
+    vacation_day_hours: f64,
+    sick_day_hours: f64,
 ) -> f64 {
-    if non_working_days.contains(&day) {
-        return 0.0;
+    if sick_days.contains(&day) {
+        return sick_day_hours;
+    }
+    if vacation_days.contains(&day) {
+        return vacation_day_hours;
     }
     if include_weekends || day.weekday().number_from_monday() <= 5 {
         target_hours
@@ -894,7 +947,10 @@ fn build_calendar_lines(
     rollup_view: RollupView,
     target_hours: f64,
     include_weekends: bool,
-    non_working_days: &HashSet<NaiveDate>,
+    vacation_days: &HashSet<NaiveDate>,
+    sick_days: &HashSet<NaiveDate>,
+    vacation_day_hours: f64,
+    sick_day_hours: f64,
     week_start: WeekStart,
     theme: &Theme,
 ) -> CalendarRender {
@@ -906,7 +962,10 @@ fn build_calendar_lines(
             focus,
             target_hours,
             include_weekends,
-            non_working_days,
+            vacation_days,
+            sick_days,
+            vacation_day_hours,
+            sick_day_hours,
             week_start,
             theme,
         )
@@ -918,7 +977,10 @@ fn build_calendar_lines(
             focus,
             target_hours,
             include_weekends,
-            non_working_days,
+            vacation_days,
+            sick_days,
+            vacation_day_hours,
+            sick_day_hours,
             week_start,
             theme,
         )
@@ -932,7 +994,10 @@ fn build_period_calendar_grid_lines(
     focus: RollupFocus,
     target_hours: f64,
     include_weekends: bool,
-    non_working_days: &HashSet<NaiveDate>,
+    vacation_days: &HashSet<NaiveDate>,
+    sick_days: &HashSet<NaiveDate>,
+    vacation_day_hours: f64,
+    sick_day_hours: f64,
     week_start: WeekStart,
     theme: &Theme,
 ) -> CalendarRender {
@@ -1059,7 +1124,10 @@ fn build_period_calendar_grid_lines(
                                 *date,
                                 target_hours,
                                 include_weekends,
-                                non_working_days,
+                                vacation_days,
+                                sick_days,
+                                vacation_day_hours,
+                                sick_day_hours,
                             ),
                     );
                     let mut style = delta_style(delta, theme).add_modifier(Modifier::BOLD);
@@ -1079,7 +1147,9 @@ fn build_period_calendar_grid_lines(
                     if *date == today {
                         style = style.add_modifier(Modifier::UNDERLINED);
                     }
-                    let day_label = if non_working_days.contains(date) {
+                    let day_label = if sick_days.contains(date) {
+                        format!("{:02}S", date.day())
+                    } else if vacation_days.contains(date) {
                         format!("{:02}V", date.day())
                     } else {
                         format!("{:02}", date.day())
@@ -1127,7 +1197,10 @@ fn build_yearly_calendar_lines(
     focus: RollupFocus,
     target_hours: f64,
     include_weekends: bool,
-    non_working_days: &HashSet<NaiveDate>,
+    vacation_days: &HashSet<NaiveDate>,
+    sick_days: &HashSet<NaiveDate>,
+    vacation_day_hours: f64,
+    sick_day_hours: f64,
     week_start: WeekStart,
     theme: &Theme,
 ) -> CalendarRender {
@@ -1171,7 +1244,10 @@ fn build_yearly_calendar_lines(
                 focus,
                 target_hours,
                 include_weekends,
-                non_working_days,
+                vacation_days,
+                sick_days,
+                vacation_day_hours,
+                sick_day_hours,
                 week_start,
                 theme,
             );
@@ -1303,7 +1379,11 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
         ]),
         Row::new(vec![
             Cell::from(Span::styled("k", key_style)),
-            Cell::from("Toggle vacation/non-working for active day"),
+            Cell::from("Toggle vacation for active day"),
+        ]),
+        Row::new(vec![
+            Cell::from(Span::styled("j", key_style)),
+            Cell::from("Toggle sick day for active day"),
         ]),
         Row::new(vec![
             Cell::from(Span::styled("[ / ]", key_style)),
@@ -1332,7 +1412,11 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
         ]),
         Row::new(vec![
             Cell::from(Span::styled("k", key_style)),
-            Cell::from("Toggle vacation/non-working for selected day"),
+            Cell::from("Toggle vacation for selected day"),
+        ]),
+        Row::new(vec![
+            Cell::from(Span::styled("j", key_style)),
+            Cell::from("Toggle sick day for selected day"),
         ]),
         Row::new(vec![
             Cell::from(Span::styled("Shift+R", key_style)),
@@ -1483,6 +1567,23 @@ fn draw_settings(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
                     };
                     ("Target hours", value, false)
                 }
+                SettingsItem::VacationDayHours => {
+                    let value =
+                        if is_editing && editing_item == Some(SettingsItem::VacationDayHours) {
+                            app.settings_input_value().to_string()
+                        } else {
+                            format!("{:.2}h", app.settings_vacation_day_hours_display())
+                        };
+                    ("Vacation day hours", value, false)
+                }
+                SettingsItem::SickDayHours => {
+                    let value = if is_editing && editing_item == Some(SettingsItem::SickDayHours) {
+                        app.settings_input_value().to_string()
+                    } else {
+                        format!("{:.2}h", app.settings_sick_day_hours_display())
+                    };
+                    ("Sick day hours", value, false)
+                }
                 SettingsItem::RollupsIncludeWeekends => {
                     let enabled = app.settings_rollups_include_weekends_display();
                     (
@@ -1567,9 +1668,10 @@ fn draw_settings(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
         SettingsFocus::Categories => "Enter items • Esc close",
         SettingsFocus::Items => "Up/Down select • Enter edit • Esc categories",
         SettingsFocus::Edit => match editing_item {
-            Some(SettingsItem::TargetHours) | Some(SettingsItem::TogglToken) => {
-                "Enter save • Esc cancel"
-            }
+            Some(SettingsItem::TargetHours)
+            | Some(SettingsItem::VacationDayHours)
+            | Some(SettingsItem::SickDayHours)
+            | Some(SettingsItem::TogglToken) => "Enter save • Esc cancel",
             Some(SettingsItem::Theme)
             | Some(SettingsItem::RollupsIncludeWeekends)
             | Some(SettingsItem::RollupsWeekStart) => "Up/Down change • Enter save • Esc cancel",
