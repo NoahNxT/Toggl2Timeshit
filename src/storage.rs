@@ -103,6 +103,13 @@ struct Config {
     vacation_day_hours: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     sick_day_hours: Option<f64>,
+    // Legacy field; used as fallback for both specific toggles.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    credit_special_days_as_worked: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    credit_vacation_days_as_worked: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    credit_sick_days_as_worked: Option<bool>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -215,6 +222,36 @@ pub fn read_sick_day_hours() -> Option<f64> {
 pub fn write_sick_day_hours(value: f64) -> Result<(), io::Error> {
     let mut config = read_config().unwrap_or_default();
     config.sick_day_hours = Some(value);
+    write_config(&config)
+}
+
+pub fn read_credit_vacation_days_as_worked() -> bool {
+    let default = default_credit_special_days_as_worked();
+    let Some(config) = read_config() else {
+        return default;
+    };
+    let fallback = config.credit_special_days_as_worked.unwrap_or(default);
+    config.credit_vacation_days_as_worked.unwrap_or(fallback)
+}
+
+pub fn write_credit_vacation_days_as_worked(value: bool) -> Result<(), io::Error> {
+    let mut config = read_config().unwrap_or_default();
+    config.credit_vacation_days_as_worked = Some(value);
+    write_config(&config)
+}
+
+pub fn read_credit_sick_days_as_worked() -> bool {
+    let default = default_credit_special_days_as_worked();
+    let Some(config) = read_config() else {
+        return default;
+    };
+    let fallback = config.credit_special_days_as_worked.unwrap_or(default);
+    config.credit_sick_days_as_worked.unwrap_or(fallback)
+}
+
+pub fn write_credit_sick_days_as_worked(value: bool) -> Result<(), io::Error> {
+    let mut config = read_config().unwrap_or_default();
+    config.credit_sick_days_as_worked = Some(value);
     write_config(&config)
 }
 
@@ -349,6 +386,10 @@ const fn default_rollup_include_weekends() -> bool {
     false
 }
 
+const fn default_credit_special_days_as_worked() -> bool {
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -418,5 +459,10 @@ mod tests {
         assert!(vacation_days.contains(&NaiveDate::from_ymd_opt(2026, 2, 10).unwrap()));
         assert!(vacation_days.contains(&NaiveDate::from_ymd_opt(2026, 2, 12).unwrap()));
         assert!(sick_days.contains(&NaiveDate::from_ymd_opt(2026, 2, 11).unwrap()));
+    }
+
+    #[test]
+    fn default_credit_special_days_is_enabled() {
+        assert!(default_credit_special_days_as_worked());
     }
 }

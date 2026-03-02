@@ -86,6 +86,8 @@ pub enum SettingsItem {
     TargetHours,
     VacationDayHours,
     SickDayHours,
+    CreditVacationDays,
+    CreditSickDays,
     RollupsIncludeWeekends,
     RollupsWeekStart,
     TimeRoundingToggle,
@@ -133,6 +135,8 @@ pub struct App {
     sick_days: HashSet<NaiveDate>,
     vacation_day_hours: f64,
     sick_day_hours: f64,
+    credit_vacation_days_as_worked: bool,
+    credit_sick_days_as_worked: bool,
     pub last_refresh: Option<DateTime<Local>>,
     pub show_help: bool,
     pub theme: ThemePreference,
@@ -163,6 +167,8 @@ pub struct App {
     settings_rounding_draft: RoundingConfig,
     settings_rounding_draft_enabled: bool,
     settings_theme_draft: ThemePreference,
+    settings_credit_vacation_days_draft: bool,
+    settings_credit_sick_days_draft: bool,
     settings_rollups_include_weekends_draft: bool,
     settings_rollups_week_start_draft: WeekStart,
     refetch_plan: Option<RefetchPlan>,
@@ -190,6 +196,8 @@ impl App {
         let special_days = storage::read_special_days();
         let vacation_day_hours = storage::read_vacation_day_hours().unwrap_or(target_hours);
         let sick_day_hours = storage::read_sick_day_hours().unwrap_or(target_hours);
+        let credit_vacation_days_as_worked = storage::read_credit_vacation_days_as_worked();
+        let credit_sick_days_as_worked = storage::read_credit_sick_days_as_worked();
         let token_hash = token.as_ref().map(|value| storage::hash_token(value));
         let cache = token_hash
             .as_ref()
@@ -240,6 +248,8 @@ impl App {
             sick_days: special_days.sick_days,
             vacation_day_hours,
             sick_day_hours,
+            credit_vacation_days_as_worked,
+            credit_sick_days_as_worked,
             last_refresh: None,
             show_help: false,
             theme,
@@ -282,6 +292,8 @@ impl App {
             settings_rounding_draft: RoundingConfig::default(),
             settings_rounding_draft_enabled: false,
             settings_theme_draft: theme,
+            settings_credit_vacation_days_draft: credit_vacation_days_as_worked,
+            settings_credit_sick_days_draft: credit_sick_days_as_worked,
             settings_rollups_include_weekends_draft: rollup_preferences.include_weekends,
             settings_rollups_week_start_draft: rollup_preferences.week_start,
             refetch_plan: None,
@@ -1078,6 +1090,13 @@ impl App {
                     self.settings_rollups_include_weekends_draft =
                         !self.settings_rollups_include_weekends_draft;
                 }
+                SettingsItem::CreditVacationDays => {
+                    self.settings_credit_vacation_days_draft =
+                        !self.settings_credit_vacation_days_draft;
+                }
+                SettingsItem::CreditSickDays => {
+                    self.settings_credit_sick_days_draft = !self.settings_credit_sick_days_draft;
+                }
                 SettingsItem::RollupsWeekStart => {
                     self.cycle_rollup_week_start(true);
                 }
@@ -1100,6 +1119,13 @@ impl App {
                 SettingsItem::RollupsIncludeWeekends => {
                     self.settings_rollups_include_weekends_draft =
                         !self.settings_rollups_include_weekends_draft;
+                }
+                SettingsItem::CreditVacationDays => {
+                    self.settings_credit_vacation_days_draft =
+                        !self.settings_credit_vacation_days_draft;
+                }
+                SettingsItem::CreditSickDays => {
+                    self.settings_credit_sick_days_draft = !self.settings_credit_sick_days_draft;
                 }
                 SettingsItem::RollupsWeekStart => {
                     self.cycle_rollup_week_start(false);
@@ -1163,6 +1189,8 @@ impl App {
                     }
                 }
                 SettingsItem::RollupsIncludeWeekends => {}
+                SettingsItem::CreditVacationDays => {}
+                SettingsItem::CreditSickDays => {}
                 SettingsItem::RollupsWeekStart => {}
                 _ => {}
             },
@@ -1265,6 +1293,8 @@ impl App {
             "Rollups" => vec![
                 SettingsItem::RollupsIncludeWeekends,
                 SettingsItem::RollupsWeekStart,
+                SettingsItem::CreditVacationDays,
+                SettingsItem::CreditSickDays,
                 SettingsItem::VacationDayHours,
                 SettingsItem::SickDayHours,
             ],
@@ -1306,6 +1336,12 @@ impl App {
             }
             SettingsItem::RollupsIncludeWeekends => {
                 self.settings_rollups_include_weekends_draft = self.rollups_include_weekends;
+            }
+            SettingsItem::CreditVacationDays => {
+                self.settings_credit_vacation_days_draft = self.credit_vacation_days_as_worked;
+            }
+            SettingsItem::CreditSickDays => {
+                self.settings_credit_sick_days_draft = self.credit_sick_days_as_worked;
             }
             SettingsItem::RollupsWeekStart => {
                 self.settings_rollups_week_start_draft = self.rollups_week_start;
@@ -1361,6 +1397,32 @@ impl App {
                 self.rollups_week_start = next.week_start;
                 self.status = Some("Rollup defaults updated.".to_string());
                 self.set_toast("Rollup defaults saved.", false);
+                self.settings_edit_item = None;
+                self.settings_focus = SettingsFocus::Items;
+                self.rebuild_rollups();
+            }
+            SettingsItem::CreditVacationDays => {
+                let next = self.settings_credit_vacation_days_draft;
+                if let Err(err) = storage::write_credit_vacation_days_as_worked(next) {
+                    self.status = Some(format!("Failed to save: {err}"));
+                    return;
+                }
+                self.credit_vacation_days_as_worked = next;
+                self.status = Some("Vacation-day crediting updated.".to_string());
+                self.set_toast("Vacation-day crediting saved.", false);
+                self.settings_edit_item = None;
+                self.settings_focus = SettingsFocus::Items;
+                self.rebuild_rollups();
+            }
+            SettingsItem::CreditSickDays => {
+                let next = self.settings_credit_sick_days_draft;
+                if let Err(err) = storage::write_credit_sick_days_as_worked(next) {
+                    self.status = Some(format!("Failed to save: {err}"));
+                    return;
+                }
+                self.credit_sick_days_as_worked = next;
+                self.status = Some("Sick-day crediting updated.".to_string());
+                self.set_toast("Sick-day crediting saved.", false);
                 self.settings_edit_item = None;
                 self.settings_focus = SettingsFocus::Items;
                 self.rebuild_rollups();
@@ -1728,6 +1790,26 @@ impl App {
             self.settings_rollups_include_weekends_draft
         } else {
             self.rollups_include_weekends
+        }
+    }
+
+    pub fn settings_credit_vacation_days_display(&self) -> bool {
+        if self.settings_focus == SettingsFocus::Edit
+            && self.settings_edit_item == Some(SettingsItem::CreditVacationDays)
+        {
+            self.settings_credit_vacation_days_draft
+        } else {
+            self.credit_vacation_days_as_worked
+        }
+    }
+
+    pub fn settings_credit_sick_days_display(&self) -> bool {
+        if self.settings_focus == SettingsFocus::Edit
+            && self.settings_edit_item == Some(SettingsItem::CreditSickDays)
+        {
+            self.settings_credit_sick_days_draft
+        } else {
+            self.credit_sick_days_as_worked
         }
     }
 
@@ -2293,6 +2375,14 @@ impl App {
 
     pub fn sick_day_hours(&self) -> f64 {
         self.sick_day_hours
+    }
+
+    pub fn credit_vacation_days_as_worked(&self) -> bool {
+        self.credit_vacation_days_as_worked
+    }
+
+    pub fn credit_sick_days_as_worked(&self) -> bool {
+        self.credit_sick_days_as_worked
     }
 
     pub fn rollup_daily_for_selected_period(&self) -> Vec<&DailyTotal> {

@@ -201,7 +201,16 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
         periods
             .iter()
             .map(|period| {
-                let hours = hours_from_seconds(period.seconds);
+                let hours = period_effective_hours(
+                    period,
+                    &app.rollups.daily,
+                    app.credit_vacation_days_as_worked(),
+                    app.credit_sick_days_as_worked(),
+                    app.vacation_days(),
+                    app.sick_days(),
+                    app.vacation_day_hours(),
+                    app.sick_day_hours(),
+                );
                 let (target, _) = period_target_hours(
                     period,
                     app.target_hours,
@@ -272,7 +281,16 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
         .and_then(|index| daily.get(index).copied());
 
     let summary_lines = if let Some(period) = app.rollup_selected_period() {
-        let total_hours = hours_from_seconds(period.seconds);
+        let total_hours = period_effective_hours(
+            period,
+            &app.rollups.daily,
+            app.credit_vacation_days_as_worked(),
+            app.credit_sick_days_as_worked(),
+            app.vacation_days(),
+            app.sick_days(),
+            app.vacation_day_hours(),
+            app.sick_day_hours(),
+        );
         let (target_hours, target_days) = period_target_hours(
             period,
             app.target_hours,
@@ -292,12 +310,23 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
             app.sick_days(),
             app.vacation_day_hours(),
             app.sick_day_hours(),
+            app.credit_vacation_days_as_worked(),
+            app.credit_sick_days_as_worked(),
             app.date_range.end_date(),
         );
-        let (worked_seconds, worked_days) =
-            period_worked_totals_until(period, &app.rollups.daily, app.date_range.end_date());
+        let (worked_hours, worked_days) = period_worked_totals_until(
+            period,
+            &app.rollups.daily,
+            app.date_range.end_date(),
+            app.credit_vacation_days_as_worked(),
+            app.credit_sick_days_as_worked(),
+            app.vacation_days(),
+            app.sick_days(),
+            app.vacation_day_hours(),
+            app.sick_day_hours(),
+        );
         let avg = if worked_days > 0 {
-            hours_from_seconds(worked_seconds) / worked_days as f64
+            worked_hours / worked_days as f64
         } else {
             0.0
         };
@@ -323,7 +352,16 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
         ];
 
         if let Some(day) = selected_day {
-            let hours = hours_from_seconds(day.seconds);
+            let hours = effective_hours_for_day(
+                day.date,
+                hours_from_seconds(day.seconds),
+                app.credit_vacation_days_as_worked(),
+                app.credit_sick_days_as_worked(),
+                app.vacation_days(),
+                app.sick_days(),
+                app.vacation_day_hours(),
+                app.sick_day_hours(),
+            );
             let day_target = target_hours_for_day(
                 day.date,
                 app.target_hours,
@@ -368,6 +406,8 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
             app.sick_days(),
             app.vacation_day_hours(),
             app.sick_day_hours(),
+            app.credit_vacation_days_as_worked(),
+            app.credit_sick_days_as_worked(),
             app.rollups_week_start,
             theme,
         );
@@ -820,6 +860,74 @@ fn special_day_suffix(app: &App, day: NaiveDate) -> String {
     String::new()
 }
 
+fn special_day_credit_hours(
+    day: NaiveDate,
+    credit_vacation_days_as_worked: bool,
+    credit_sick_days_as_worked: bool,
+    vacation_days: &HashSet<NaiveDate>,
+    sick_days: &HashSet<NaiveDate>,
+    vacation_day_hours: f64,
+    sick_day_hours: f64,
+) -> f64 {
+    if credit_sick_days_as_worked && sick_days.contains(&day) {
+        return sick_day_hours;
+    }
+    if credit_vacation_days_as_worked && vacation_days.contains(&day) {
+        return vacation_day_hours;
+    }
+    0.0
+}
+
+fn effective_hours_for_day(
+    day: NaiveDate,
+    worked_hours: f64,
+    credit_vacation_days_as_worked: bool,
+    credit_sick_days_as_worked: bool,
+    vacation_days: &HashSet<NaiveDate>,
+    sick_days: &HashSet<NaiveDate>,
+    vacation_day_hours: f64,
+    sick_day_hours: f64,
+) -> f64 {
+    let credit = special_day_credit_hours(
+        day,
+        credit_vacation_days_as_worked,
+        credit_sick_days_as_worked,
+        vacation_days,
+        sick_days,
+        vacation_day_hours,
+        sick_day_hours,
+    );
+    worked_hours.max(credit)
+}
+
+fn period_effective_hours(
+    period: &PeriodRollup,
+    daily: &[DailyTotal],
+    credit_vacation_days_as_worked: bool,
+    credit_sick_days_as_worked: bool,
+    vacation_days: &HashSet<NaiveDate>,
+    sick_days: &HashSet<NaiveDate>,
+    vacation_day_hours: f64,
+    sick_day_hours: f64,
+) -> f64 {
+    daily
+        .iter()
+        .filter(|day| day.date >= period.start && day.date <= period.end)
+        .map(|day| {
+            effective_hours_for_day(
+                day.date,
+                hours_from_seconds(day.seconds),
+                credit_vacation_days_as_worked,
+                credit_sick_days_as_worked,
+                vacation_days,
+                sick_days,
+                vacation_day_hours,
+                sick_day_hours,
+            )
+        })
+        .sum()
+}
+
 fn period_target_hours(
     period: &PeriodRollup,
     target_hours: f64,
@@ -860,6 +968,8 @@ fn period_overtime_left_hours(
     sick_days: &HashSet<NaiveDate>,
     vacation_day_hours: f64,
     sick_day_hours: f64,
+    credit_vacation_days_as_worked: bool,
+    credit_sick_days_as_worked: bool,
     active_end: NaiveDate,
 ) -> f64 {
     let cutoff = period.end.min(active_end);
@@ -867,12 +977,22 @@ fn period_overtime_left_hours(
         return 0.0;
     }
 
-    let (worked_seconds, target_total) = daily
+    let (worked_total, target_total) = daily
         .iter()
         .filter(|day| day.date >= period.start && day.date <= cutoff)
-        .fold((0i64, 0.0f64), |(worked, target), day| {
+        .fold((0.0f64, 0.0f64), |(worked, target), day| {
             (
-                worked + day.seconds,
+                worked
+                    + effective_hours_for_day(
+                        day.date,
+                        hours_from_seconds(day.seconds),
+                        credit_vacation_days_as_worked,
+                        credit_sick_days_as_worked,
+                        vacation_days,
+                        sick_days,
+                        vacation_day_hours,
+                        sick_day_hours,
+                    ),
                 target
                     + target_hours_for_day(
                         day.date,
@@ -886,7 +1006,7 @@ fn period_overtime_left_hours(
             )
         });
 
-    let overtime = normalize_delta(hours_from_seconds(worked_seconds) - target_total);
+    let overtime = normalize_delta(worked_total - target_total);
     if overtime > 0.0 { overtime } else { 0.0 }
 }
 
@@ -894,20 +1014,36 @@ fn period_worked_totals_until(
     period: &PeriodRollup,
     daily: &[DailyTotal],
     active_end: NaiveDate,
-) -> (i64, usize) {
+    credit_vacation_days_as_worked: bool,
+    credit_sick_days_as_worked: bool,
+    vacation_days: &HashSet<NaiveDate>,
+    sick_days: &HashSet<NaiveDate>,
+    vacation_day_hours: f64,
+    sick_day_hours: f64,
+) -> (f64, usize) {
     let cutoff = period.end.min(active_end);
     if cutoff < period.start {
-        return (0, 0);
+        return (0.0, 0);
     }
 
     daily
         .iter()
         .filter(|day| day.date >= period.start && day.date <= cutoff)
-        .fold((0i64, 0usize), |(worked_seconds, worked_days), day| {
-            if day.seconds > 0 {
-                (worked_seconds + day.seconds, worked_days + 1)
+        .fold((0.0f64, 0usize), |(worked_hours, worked_days), day| {
+            let effective = effective_hours_for_day(
+                day.date,
+                hours_from_seconds(day.seconds),
+                credit_vacation_days_as_worked,
+                credit_sick_days_as_worked,
+                vacation_days,
+                sick_days,
+                vacation_day_hours,
+                sick_day_hours,
+            );
+            if effective > 0.0 {
+                (worked_hours + effective, worked_days + 1)
             } else {
-                (worked_seconds, worked_days)
+                (worked_hours, worked_days)
             }
         })
 }
@@ -951,6 +1087,8 @@ fn build_calendar_lines(
     sick_days: &HashSet<NaiveDate>,
     vacation_day_hours: f64,
     sick_day_hours: f64,
+    credit_vacation_days_as_worked: bool,
+    credit_sick_days_as_worked: bool,
     week_start: WeekStart,
     theme: &Theme,
 ) -> CalendarRender {
@@ -966,6 +1104,8 @@ fn build_calendar_lines(
             sick_days,
             vacation_day_hours,
             sick_day_hours,
+            credit_vacation_days_as_worked,
+            credit_sick_days_as_worked,
             week_start,
             theme,
         )
@@ -981,6 +1121,8 @@ fn build_calendar_lines(
             sick_days,
             vacation_day_hours,
             sick_day_hours,
+            credit_vacation_days_as_worked,
+            credit_sick_days_as_worked,
             week_start,
             theme,
         )
@@ -998,6 +1140,8 @@ fn build_period_calendar_grid_lines(
     sick_days: &HashSet<NaiveDate>,
     vacation_day_hours: f64,
     sick_day_hours: f64,
+    credit_vacation_days_as_worked: bool,
+    credit_sick_days_as_worked: bool,
     week_start: WeekStart,
     theme: &Theme,
 ) -> CalendarRender {
@@ -1116,8 +1260,17 @@ fn build_period_calendar_grid_lines(
         for cell in week {
             match cell {
                 Some(date) => {
-                    let seconds = *map.get(date).unwrap_or(&0);
-                    let hours = hours_from_seconds(seconds);
+                    let worked_hours = hours_from_seconds(*map.get(date).unwrap_or(&0));
+                    let hours = effective_hours_for_day(
+                        *date,
+                        worked_hours,
+                        credit_vacation_days_as_worked,
+                        credit_sick_days_as_worked,
+                        vacation_days,
+                        sick_days,
+                        vacation_day_hours,
+                        sick_day_hours,
+                    );
                     let delta = normalize_delta(
                         hours
                             - target_hours_for_day(
@@ -1201,6 +1354,8 @@ fn build_yearly_calendar_lines(
     sick_days: &HashSet<NaiveDate>,
     vacation_day_hours: f64,
     sick_day_hours: f64,
+    credit_vacation_days_as_worked: bool,
+    credit_sick_days_as_worked: bool,
     week_start: WeekStart,
     theme: &Theme,
 ) -> CalendarRender {
@@ -1248,6 +1403,8 @@ fn build_yearly_calendar_lines(
                 sick_days,
                 vacation_day_hours,
                 sick_day_hours,
+                credit_vacation_days_as_worked,
+                credit_sick_days_as_worked,
                 week_start,
                 theme,
             );
@@ -1603,6 +1760,30 @@ fn draw_settings(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
                     };
                     ("Week start", value.to_string(), false)
                 }
+                SettingsItem::CreditVacationDays => {
+                    let enabled = app.settings_credit_vacation_days_display();
+                    (
+                        "Credit vacation as worked",
+                        if enabled {
+                            "On".to_string()
+                        } else {
+                            "Off".to_string()
+                        },
+                        false,
+                    )
+                }
+                SettingsItem::CreditSickDays => {
+                    let enabled = app.settings_credit_sick_days_display();
+                    (
+                        "Credit sick as worked",
+                        if enabled {
+                            "On".to_string()
+                        } else {
+                            "Off".to_string()
+                        },
+                        false,
+                    )
+                }
                 SettingsItem::TimeRoundingToggle => {
                     let value = if rounding_enabled { "On" } else { "Off" }.to_string();
                     ("Time rounding", value, false)
@@ -1674,7 +1855,9 @@ fn draw_settings(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
             | Some(SettingsItem::TogglToken) => "Enter save • Esc cancel",
             Some(SettingsItem::Theme)
             | Some(SettingsItem::RollupsIncludeWeekends)
-            | Some(SettingsItem::RollupsWeekStart) => "Up/Down change • Enter save • Esc cancel",
+            | Some(SettingsItem::RollupsWeekStart)
+            | Some(SettingsItem::CreditVacationDays)
+            | Some(SettingsItem::CreditSickDays) => "Up/Down change • Enter save • Esc cancel",
             Some(SettingsItem::TimeRoundingToggle)
             | Some(SettingsItem::RoundingIncrement)
             | Some(SettingsItem::RoundingMode) => "Up/Down change • Enter save • Esc cancel",
