@@ -92,8 +92,17 @@ struct Config {
     rounding: Option<RoundingConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     rollup_preferences: Option<RollupPreferences>,
+    // Backward-compatible legacy field; merged into vacation_days on read.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     non_working_days: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    vacation_days: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    sick_days: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    vacation_day_hours: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sick_day_hours: Option<f64>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -151,26 +160,72 @@ pub fn write_rollup_preferences(value: RollupPreferences) -> Result<(), io::Erro
     write_config(&config)
 }
 
-pub fn read_non_working_days() -> HashSet<NaiveDate> {
-    read_config()
-        .map(|config| parse_non_working_days(&config.non_working_days))
-        .unwrap_or_default()
+#[derive(Debug, Clone, Default)]
+pub struct SpecialDays {
+    pub vacation_days: HashSet<NaiveDate>,
+    pub sick_days: HashSet<NaiveDate>,
 }
 
-pub fn write_non_working_days(value: &HashSet<NaiveDate>) -> Result<(), io::Error> {
+pub fn read_special_days() -> SpecialDays {
+    let Some(config) = read_config() else {
+        return SpecialDays::default();
+    };
+
+    let mut vacation_days = parse_day_list(&config.vacation_days);
+    // Migrate legacy "non_working_days" to vacation days.
+    vacation_days.extend(parse_day_list(&config.non_working_days));
+    let sick_days = parse_day_list(&config.sick_days);
+
+    for day in &sick_days {
+        vacation_days.remove(day);
+    }
+
+    SpecialDays {
+        vacation_days,
+        sick_days,
+    }
+}
+
+pub fn write_special_days(
+    vacation_days: &HashSet<NaiveDate>,
+    sick_days: &HashSet<NaiveDate>,
+) -> Result<(), io::Error> {
     let mut config = read_config().unwrap_or_default();
-    config.non_working_days = format_non_working_days(value);
+    config.vacation_days = format_day_list(vacation_days);
+    config.sick_days = format_day_list(sick_days);
+    // Keep legacy field in sync for backward compatibility.
+    config.non_working_days = config.vacation_days.clone();
     write_config(&config)
 }
 
-fn parse_non_working_days(values: &[String]) -> HashSet<NaiveDate> {
+pub fn read_vacation_day_hours() -> Option<f64> {
+    read_config().and_then(|config| config.vacation_day_hours)
+}
+
+pub fn write_vacation_day_hours(value: f64) -> Result<(), io::Error> {
+    let mut config = read_config().unwrap_or_default();
+    config.vacation_day_hours = Some(value);
+    write_config(&config)
+}
+
+pub fn read_sick_day_hours() -> Option<f64> {
+    read_config().and_then(|config| config.sick_day_hours)
+}
+
+pub fn write_sick_day_hours(value: f64) -> Result<(), io::Error> {
+    let mut config = read_config().unwrap_or_default();
+    config.sick_day_hours = Some(value);
+    write_config(&config)
+}
+
+fn parse_day_list(values: &[String]) -> HashSet<NaiveDate> {
     values
         .iter()
         .filter_map(|value| NaiveDate::parse_from_str(value, "%Y-%m-%d").ok())
         .collect()
 }
 
-fn format_non_working_days(values: &HashSet<NaiveDate>) -> Vec<String> {
+fn format_day_list(values: &HashSet<NaiveDate>) -> Vec<String> {
     let mut encoded = values
         .iter()
         .map(|day| day.format("%Y-%m-%d").to_string())
@@ -325,24 +380,43 @@ mod tests {
     }
 
     #[test]
-    fn parse_non_working_days_skips_invalid_values() {
+    fn parse_day_list_skips_invalid_values() {
         let values = vec![
             "2026-02-10".to_string(),
             "invalid".to_string(),
             "2026-02-11".to_string(),
         ];
-        let parsed = parse_non_working_days(&values);
+        let parsed = parse_day_list(&values);
         assert_eq!(parsed.len(), 2);
         assert!(parsed.contains(&NaiveDate::from_ymd_opt(2026, 2, 10).unwrap()));
         assert!(parsed.contains(&NaiveDate::from_ymd_opt(2026, 2, 11).unwrap()));
     }
 
     #[test]
-    fn format_non_working_days_is_sorted() {
+    fn format_day_list_is_sorted() {
         let mut values = HashSet::new();
         values.insert(NaiveDate::from_ymd_opt(2026, 2, 12).unwrap());
         values.insert(NaiveDate::from_ymd_opt(2026, 2, 10).unwrap());
-        let encoded = format_non_working_days(&values);
+        let encoded = format_day_list(&values);
         assert_eq!(encoded, vec!["2026-02-10", "2026-02-12"]);
+    }
+
+    #[test]
+    fn read_special_days_merges_legacy_non_working() {
+        let config = Config {
+            vacation_days: vec!["2026-02-10".to_string()],
+            sick_days: vec!["2026-02-11".to_string()],
+            non_working_days: vec!["2026-02-12".to_string()],
+            ..Config::default()
+        };
+        let mut vacation_days = parse_day_list(&config.vacation_days);
+        vacation_days.extend(parse_day_list(&config.non_working_days));
+        let sick_days = parse_day_list(&config.sick_days);
+        for day in &sick_days {
+            vacation_days.remove(day);
+        }
+        assert!(vacation_days.contains(&NaiveDate::from_ymd_opt(2026, 2, 10).unwrap()));
+        assert!(vacation_days.contains(&NaiveDate::from_ymd_opt(2026, 2, 12).unwrap()));
+        assert!(sick_days.contains(&NaiveDate::from_ymd_opt(2026, 2, 11).unwrap()));
     }
 }

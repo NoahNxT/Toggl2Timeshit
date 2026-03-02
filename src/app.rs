@@ -84,6 +84,8 @@ pub enum SettingsFocus {
 pub enum SettingsItem {
     Theme,
     TargetHours,
+    VacationDayHours,
+    SickDayHours,
     RollupsIncludeWeekends,
     RollupsWeekStart,
     TimeRoundingToggle,
@@ -127,7 +129,10 @@ pub struct App {
     pub rollup_day_state: ListState,
     pub rollups_include_weekends: bool,
     pub rollups_week_start: WeekStart,
-    non_working_days: HashSet<NaiveDate>,
+    vacation_days: HashSet<NaiveDate>,
+    sick_days: HashSet<NaiveDate>,
+    vacation_day_hours: f64,
+    sick_day_hours: f64,
     pub last_refresh: Option<DateTime<Local>>,
     pub show_help: bool,
     pub theme: ThemePreference,
@@ -182,7 +187,9 @@ impl App {
         let target_hours = storage::read_target_hours().unwrap_or(8.0);
         let rounding = storage::read_rounding();
         let rollup_preferences = storage::read_rollup_preferences();
-        let non_working_days = storage::read_non_working_days();
+        let special_days = storage::read_special_days();
+        let vacation_day_hours = storage::read_vacation_day_hours().unwrap_or(target_hours);
+        let sick_day_hours = storage::read_sick_day_hours().unwrap_or(target_hours);
         let token_hash = token.as_ref().map(|value| storage::hash_token(value));
         let cache = token_hash
             .as_ref()
@@ -229,7 +236,10 @@ impl App {
             rollup_day_state,
             rollups_include_weekends: rollup_preferences.include_weekends,
             rollups_week_start: rollup_preferences.week_start,
-            non_working_days,
+            vacation_days: special_days.vacation_days,
+            sick_days: special_days.sick_days,
+            vacation_day_hours,
+            sick_day_hours,
             last_refresh: None,
             show_help: false,
             theme,
@@ -698,7 +708,10 @@ impl App {
             KeyCode::Char('o') | KeyCode::Char('O') => self.enter_rollups(),
             KeyCode::Char('d') => self.enter_date_input(DateInputMode::Range),
             KeyCode::Char('k') | KeyCode::Char('K') => {
-                self.toggle_non_working_day(self.date_range.end_date());
+                self.toggle_vacation_day(self.date_range.end_date());
+            }
+            KeyCode::Char('j') | KeyCode::Char('J') => {
+                self.toggle_sick_day(self.date_range.end_date());
             }
             KeyCode::Char('u') | KeyCode::Char('U') => {
                 if self.update_info.is_some() && self.update_installable {
@@ -767,7 +780,10 @@ impl App {
             KeyCode::Char('y') | KeyCode::Char('Y') => self.set_rollup_view(RollupView::Yearly),
             KeyCode::Char('z') | KeyCode::Char('Z') => self.toggle_rollup_weekends(),
             KeyCode::Char('k') | KeyCode::Char('K') => {
-                self.toggle_non_working_day(self.rollup_toggle_day());
+                self.toggle_vacation_day(self.rollup_toggle_day());
+            }
+            KeyCode::Char('j') | KeyCode::Char('J') => {
+                self.toggle_sick_day(self.rollup_toggle_day());
             }
             KeyCode::Char('R')
                 if key.modifiers.contains(KeyModifiers::SHIFT)
@@ -1074,6 +1090,7 @@ impl App {
                 SettingsItem::RoundingMode => {
                     self.cycle_rounding_mode(true);
                 }
+                SettingsItem::VacationDayHours | SettingsItem::SickDayHours => {}
                 _ => {}
             },
             KeyCode::Down => match item {
@@ -1096,10 +1113,14 @@ impl App {
                 SettingsItem::RoundingMode => {
                     self.cycle_rounding_mode(false);
                 }
+                SettingsItem::VacationDayHours | SettingsItem::SickDayHours => {}
                 _ => {}
             },
             KeyCode::Backspace => match item {
-                SettingsItem::TargetHours | SettingsItem::TogglToken => {
+                SettingsItem::TargetHours
+                | SettingsItem::VacationDayHours
+                | SettingsItem::SickDayHours
+                | SettingsItem::TogglToken => {
                     self.settings_input.pop();
                 }
                 _ => {}
@@ -1126,6 +1147,21 @@ impl App {
                         self.settings_input.push(ch);
                     }
                 }
+                SettingsItem::VacationDayHours | SettingsItem::SickDayHours => {
+                    if ch.is_ascii_digit() {
+                        self.settings_input.push(ch);
+                        return;
+                    }
+                    if ch == '.' || ch == ',' {
+                        if self.settings_input.is_empty() {
+                            return;
+                        }
+                        if self.settings_input.contains('.') || self.settings_input.contains(',') {
+                            return;
+                        }
+                        self.settings_input.push(ch);
+                    }
+                }
                 SettingsItem::RollupsIncludeWeekends => {}
                 SettingsItem::RollupsWeekStart => {}
                 _ => {}
@@ -1134,10 +1170,10 @@ impl App {
         }
     }
 
-    fn parse_target_hours(&self) -> Result<f64, String> {
+    fn parse_hours_input(&self, label: &str, allow_zero: bool) -> Result<f64, String> {
         let mut value = self.settings_input.trim().to_string();
         if value.is_empty() {
-            return Err("Target hours is required.".to_string());
+            return Err(format!("{label} is required."));
         }
 
         if value.contains(',') && !value.contains('.') {
@@ -1163,11 +1199,21 @@ impl App {
         let parsed: f64 = value
             .parse()
             .map_err(|_| "Invalid number format.".to_string())?;
-        if parsed <= 0.0 {
-            return Err("Target hours must be greater than 0.".to_string());
+        if parsed < 0.0 || (!allow_zero && parsed <= 0.0) {
+            if allow_zero {
+                return Err(format!("{label} must be 0 or greater."));
+            }
+            return Err(format!("{label} must be greater than 0."));
+        }
+        if parsed > 24.0 {
+            return Err(format!("{label} must be 24 or less."));
         }
 
         Ok((parsed * 100.0).round() / 100.0)
+    }
+
+    fn parse_target_hours(&self) -> Result<f64, String> {
+        self.parse_hours_input("Target hours", false)
     }
 
     fn rebuild_grouped(&mut self) {
@@ -1219,6 +1265,8 @@ impl App {
             "Rollups" => vec![
                 SettingsItem::RollupsIncludeWeekends,
                 SettingsItem::RollupsWeekStart,
+                SettingsItem::VacationDayHours,
+                SettingsItem::SickDayHours,
             ],
             _ => vec![
                 SettingsItem::Theme,
@@ -1249,6 +1297,12 @@ impl App {
             }
             SettingsItem::TargetHours => {
                 self.settings_input = format!("{:.2}", self.target_hours);
+            }
+            SettingsItem::VacationDayHours => {
+                self.settings_input = format!("{:.2}", self.vacation_day_hours);
+            }
+            SettingsItem::SickDayHours => {
+                self.settings_input = format!("{:.2}", self.sick_day_hours);
             }
             SettingsItem::RollupsIncludeWeekends => {
                 self.settings_rollups_include_weekends_draft = self.rollups_include_weekends;
@@ -1327,6 +1381,44 @@ impl App {
                 self.settings_input = format!("{:.2}", parsed);
                 self.status = Some("Target hours updated.".to_string());
                 self.set_toast("Target hours saved.", false);
+                self.settings_edit_item = None;
+                self.settings_focus = SettingsFocus::Items;
+            }
+            SettingsItem::VacationDayHours => {
+                let parsed = match self.parse_hours_input("Vacation day hours", true) {
+                    Ok(value) => value,
+                    Err(message) => {
+                        self.status = Some(message);
+                        return;
+                    }
+                };
+                if let Err(err) = storage::write_vacation_day_hours(parsed) {
+                    self.status = Some(format!("Failed to save: {err}"));
+                    return;
+                }
+                self.vacation_day_hours = parsed;
+                self.settings_input = format!("{:.2}", parsed);
+                self.status = Some("Vacation day hours updated.".to_string());
+                self.set_toast("Vacation day hours saved.", false);
+                self.settings_edit_item = None;
+                self.settings_focus = SettingsFocus::Items;
+            }
+            SettingsItem::SickDayHours => {
+                let parsed = match self.parse_hours_input("Sick day hours", true) {
+                    Ok(value) => value,
+                    Err(message) => {
+                        self.status = Some(message);
+                        return;
+                    }
+                };
+                if let Err(err) = storage::write_sick_day_hours(parsed) {
+                    self.status = Some(format!("Failed to save: {err}"));
+                    return;
+                }
+                self.sick_day_hours = parsed;
+                self.settings_input = format!("{:.2}", parsed);
+                self.status = Some("Sick day hours updated.".to_string());
+                self.set_toast("Sick day hours saved.", false);
                 self.settings_edit_item = None;
                 self.settings_focus = SettingsFocus::Items;
             }
@@ -1605,6 +1697,28 @@ impl App {
         } else {
             self.theme
         }
+    }
+
+    pub fn settings_vacation_day_hours_display(&self) -> f64 {
+        if self.settings_focus == SettingsFocus::Edit
+            && self.settings_edit_item == Some(SettingsItem::VacationDayHours)
+        {
+            return self
+                .parse_hours_input("Vacation day hours", true)
+                .unwrap_or(self.vacation_day_hours);
+        }
+        self.vacation_day_hours
+    }
+
+    pub fn settings_sick_day_hours_display(&self) -> f64 {
+        if self.settings_focus == SettingsFocus::Edit
+            && self.settings_edit_item == Some(SettingsItem::SickDayHours)
+        {
+            return self
+                .parse_hours_input("Sick day hours", true)
+                .unwrap_or(self.sick_day_hours);
+        }
+        self.sick_day_hours
     }
 
     pub fn settings_rollups_include_weekends_display(&self) -> bool {
@@ -1905,31 +2019,75 @@ impl App {
         self.date_range.end_date()
     }
 
-    fn toggle_non_working_day(&mut self, day: NaiveDate) {
-        let was_marked = self.non_working_days.contains(&day);
-        if was_marked {
-            self.non_working_days.remove(&day);
-        } else {
-            self.non_working_days.insert(day);
-        }
-
-        if let Err(err) = storage::write_non_working_days(&self.non_working_days) {
-            if was_marked {
-                self.non_working_days.insert(day);
-            } else {
-                self.non_working_days.remove(&day);
-            }
-            let message = format!("Failed to save non-working days: {err}");
+    fn persist_special_days(
+        &mut self,
+        previous_vacation: HashSet<NaiveDate>,
+        previous_sick: HashSet<NaiveDate>,
+    ) -> bool {
+        if let Err(err) = storage::write_special_days(&self.vacation_days, &self.sick_days) {
+            self.vacation_days = previous_vacation;
+            self.sick_days = previous_sick;
+            let message = format!("Failed to save special days: {err}");
             self.status = Some(message.clone());
             self.set_toast(message, true);
+            return false;
+        }
+        true
+    }
+
+    fn toggle_vacation_day(&mut self, day: NaiveDate) {
+        let previous_vacation = self.vacation_days.clone();
+        let previous_sick = self.sick_days.clone();
+        let was_vacation = self.vacation_days.contains(&day);
+
+        if was_vacation {
+            self.vacation_days.remove(&day);
+        } else {
+            self.vacation_days.insert(day);
+            self.sick_days.remove(&day);
+        }
+
+        if !self.persist_special_days(previous_vacation, previous_sick) {
             return;
         }
 
         let date = day.format("%Y-%m-%d");
-        let message = if was_marked {
-            format!("Removed {date} from vacation/non-working days.")
+        let message = if was_vacation {
+            format!("Removed vacation day on {date}.")
         } else {
-            format!("Marked {date} as vacation/non-working day.")
+            format!(
+                "Marked {date} as vacation day ({:.2}h target).",
+                self.vacation_day_hours
+            )
+        };
+        self.status = Some(message.clone());
+        self.set_toast(message, false);
+    }
+
+    fn toggle_sick_day(&mut self, day: NaiveDate) {
+        let previous_vacation = self.vacation_days.clone();
+        let previous_sick = self.sick_days.clone();
+        let was_sick = self.sick_days.contains(&day);
+
+        if was_sick {
+            self.sick_days.remove(&day);
+        } else {
+            self.sick_days.insert(day);
+            self.vacation_days.remove(&day);
+        }
+
+        if !self.persist_special_days(previous_vacation, previous_sick) {
+            return;
+        }
+
+        let date = day.format("%Y-%m-%d");
+        let message = if was_sick {
+            format!("Removed sick day on {date}.")
+        } else {
+            format!(
+                "Marked {date} as sick day ({:.2}h target).",
+                self.sick_day_hours
+            )
         };
         self.status = Some(message.clone());
         self.set_toast(message, false);
@@ -2113,12 +2271,28 @@ impl App {
         self.rollup_periods().get(index)
     }
 
-    pub fn non_working_days(&self) -> &HashSet<NaiveDate> {
-        &self.non_working_days
+    pub fn vacation_days(&self) -> &HashSet<NaiveDate> {
+        &self.vacation_days
     }
 
-    pub fn is_non_working_day(&self, day: NaiveDate) -> bool {
-        self.non_working_days.contains(&day)
+    pub fn sick_days(&self) -> &HashSet<NaiveDate> {
+        &self.sick_days
+    }
+
+    pub fn is_vacation_day(&self, day: NaiveDate) -> bool {
+        self.vacation_days.contains(&day)
+    }
+
+    pub fn is_sick_day(&self, day: NaiveDate) -> bool {
+        self.sick_days.contains(&day)
+    }
+
+    pub fn vacation_day_hours(&self) -> f64 {
+        self.vacation_day_hours
+    }
+
+    pub fn sick_day_hours(&self) -> f64 {
+        self.sick_day_hours
     }
 
     pub fn rollup_daily_for_selected_period(&self) -> Vec<&DailyTotal> {
