@@ -135,6 +135,7 @@ pub struct App {
     pub update_info: Option<UpdateInfo>,
     pub update_error: Option<String>,
     pub update_installable: bool,
+    show_update_popup: bool,
     pub rounding: Option<RoundingConfig>,
     token_hash: Option<String>,
     cache: Option<CacheFile>,
@@ -237,6 +238,7 @@ impl App {
             update_info: None,
             update_error: None,
             update_installable: false,
+            show_update_popup: false,
             rounding,
             token_hash,
             cache,
@@ -342,14 +344,17 @@ impl App {
                     )
                 };
                 self.update_info = Some(info);
+                self.show_update_popup = true;
                 self.status = Some(message.clone());
                 self.set_toast(message, false);
             }
             Ok(None) => {
                 self.update_info = None;
                 self.update_installable = false;
+                self.show_update_popup = false;
             }
             Err(err) => {
+                self.show_update_popup = false;
                 let message = format!("Update check failed: {err}");
                 self.status = Some(message.clone());
                 self.set_toast(message, true);
@@ -644,6 +649,7 @@ impl App {
         if self.update_resume_mode.is_none() {
             self.update_resume_mode = Some(self.mode);
         }
+        self.show_update_popup = false;
         self.mode = Mode::Updating;
         self.needs_update_install = true;
         self.update_error = None;
@@ -683,6 +689,25 @@ impl App {
             return;
         }
 
+        if self.show_update_popup {
+            match key.code {
+                KeyCode::Esc | KeyCode::Enter => {
+                    self.show_update_popup = false;
+                    return;
+                }
+                KeyCode::Char('u') | KeyCode::Char('U') => {
+                    self.show_update_popup = false;
+                    if self.update_info.is_some() && self.update_installable {
+                        self.start_update();
+                    } else if self.update_info.is_some() {
+                        self.set_toast("Update via package manager.", false);
+                    }
+                    return;
+                }
+                _ => {}
+            }
+        }
+
         match key.code {
             KeyCode::Char('q') => self.should_quit = true,
             KeyCode::Char('r') => self.trigger_refresh(),
@@ -701,6 +726,7 @@ impl App {
                 self.toggle_non_working_day(self.date_range.end_date());
             }
             KeyCode::Char('u') | KeyCode::Char('U') => {
+                self.show_update_popup = false;
                 if self.update_info.is_some() && self.update_installable {
                     self.start_update();
                 } else if self.update_info.is_some() {
@@ -756,6 +782,25 @@ impl App {
                 _ => {}
             }
             return;
+        }
+
+        if self.show_update_popup {
+            match key.code {
+                KeyCode::Esc | KeyCode::Enter => {
+                    self.show_update_popup = false;
+                    return;
+                }
+                KeyCode::Char('u') | KeyCode::Char('U') => {
+                    self.show_update_popup = false;
+                    if self.update_info.is_some() && self.update_installable {
+                        self.start_update();
+                    } else if self.update_info.is_some() {
+                        self.set_toast("Update via package manager.", false);
+                    }
+                    return;
+                }
+                _ => {}
+            }
         }
 
         match key.code {
@@ -2473,6 +2518,10 @@ impl App {
             message: toast.message.clone(),
             is_error: toast.is_error,
         })
+    }
+
+    pub fn should_show_update_popup(&self) -> bool {
+        self.show_update_popup && self.update_info.is_some()
     }
 
     pub fn visible_status(&mut self) -> Option<String> {
