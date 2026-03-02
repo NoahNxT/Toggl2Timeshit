@@ -37,6 +37,10 @@ Rounding is applied to each **grouped entry line** (per description). Project to
   Whether weekends are part of rollup targeting and navigation.
 - **Week start**  
   Monday or Sunday for weekly grouping/calendar.
+- **Credit vacation as worked**  
+  If enabled, each vacation day contributes its configured vacation-day hours to worked totals.
+- **Credit sick as worked**  
+  If enabled, each sick day contributes its configured sick-day hours to worked totals.
 - **Vacation day hours**  
   Target hours counted for days marked as vacation (`k` shortcut).
 - **Sick day hours**  
