@@ -131,6 +131,8 @@ pub struct App {
     pub rollup_day_state: ListState,
     pub rollups_include_weekends: bool,
     pub rollups_week_start: WeekStart,
+    rollup_year_cursor: i32,
+    rollup_fetched_days: HashSet<NaiveDate>,
     vacation_days: HashSet<NaiveDate>,
     sick_days: HashSet<NaiveDate>,
     vacation_day_hours: f64,
@@ -216,6 +218,7 @@ impl App {
         rollup_year_state.select(Some(0));
         let mut rollup_day_state = ListState::default();
         rollup_day_state.select(Some(0));
+        let rollup_year_cursor = date_range.end_date().year();
 
         App {
             should_quit: false,
@@ -245,6 +248,8 @@ impl App {
             rollup_day_state,
             rollups_include_weekends: rollup_preferences.include_weekends,
             rollups_week_start: rollup_preferences.week_start,
+            rollup_year_cursor,
+            rollup_fetched_days: HashSet::new(),
             vacation_days: special_days.vacation_days,
             sick_days: special_days.sick_days,
             vacation_day_hours,
@@ -835,6 +840,8 @@ impl App {
             KeyCode::Char('w') | KeyCode::Char('W') => self.set_rollup_view(RollupView::Weekly),
             KeyCode::Char('m') | KeyCode::Char('M') => self.set_rollup_view(RollupView::Monthly),
             KeyCode::Char('y') | KeyCode::Char('Y') => self.set_rollup_view(RollupView::Yearly),
+            KeyCode::Char('[') => self.shift_rollup_year(-1),
+            KeyCode::Char(']') => self.shift_rollup_year(1),
             KeyCode::Char('z') | KeyCode::Char('Z') => self.toggle_rollup_weekends(),
             KeyCode::Char('k') | KeyCode::Char('K') => {
                 self.toggle_vacation_day(self.rollup_toggle_day());
@@ -1043,6 +1050,7 @@ impl App {
     }
 
     fn set_date_range_with_resume(&mut self, range: DateRange, resume_mode: Option<Mode>) {
+        self.rollup_year_cursor = range.end_date().year();
         self.date_range = range;
         self.mode = Mode::Loading;
         self.refresh_intent = RefreshIntent::CacheOnly;
@@ -1967,6 +1975,7 @@ impl App {
             .as_ref()
             .map(|workspace| workspace.id)
         else {
+            self.rollup_fetched_days.clear();
             self.rollups = build_rollups(
                 &self.time_entries,
                 rollup_start,
@@ -1979,6 +1988,10 @@ impl App {
             self.ensure_rollup_selections();
             return;
         };
+
+        self.rollup_fetched_days =
+            self.collect_cached_day_coverage_for_range(workspace_id, rollup_start, rollup_end);
+        self.extend_rollup_coverage_with_active_range(rollup_start, rollup_end);
 
         let mut entries_by_id: HashMap<u64, TimeEntry> = HashMap::new();
         for entry in self.collect_cached_entries_for_range(workspace_id, rollup_start, rollup_end) {
@@ -2009,47 +2022,57 @@ impl App {
     }
 
     fn rollup_bounds(&self) -> (NaiveDate, NaiveDate) {
-        let start = self.date_range.start_date();
-        let end = self.date_range.end_date();
+        let year = clamp_year(self.rollup_year_cursor);
         match self.rollup_view {
-            RollupView::Yearly => (year_start(start), year_end(end)),
-            RollupView::Weekly | RollupView::Monthly => (month_start(start), month_end(end)),
+            RollupView::Weekly | RollupView::Monthly => (
+                NaiveDate::from_ymd_opt(year, 1, 1)
+                    .unwrap_or_else(|| year_start(Local::now().date_naive())),
+                NaiveDate::from_ymd_opt(year, 12, 31)
+                    .unwrap_or_else(|| year_end(Local::now().date_naive())),
+            ),
+            RollupView::Yearly => {
+                let window_start = clamp_year(year.saturating_sub(2));
+                let window_end = clamp_year(year.saturating_add(5));
+                (
+                    NaiveDate::from_ymd_opt(window_start, 1, 1)
+                        .unwrap_or_else(|| year_start(Local::now().date_naive())),
+                    NaiveDate::from_ymd_opt(window_end, 12, 31)
+                        .unwrap_or_else(|| year_end(Local::now().date_naive())),
+                )
+            }
         }
     }
 
     fn align_rollup_selection_to_active_range(&mut self) {
-        let target_day = self.date_range.end_date();
+        let target_day = self.rollup_target_day();
 
-        if let Some(index) = self
+        let weekly_index = self
             .rollups
             .weekly
             .iter()
             .position(|period| period.start <= target_day && period.end >= target_day)
-        {
-            self.rollup_week_state.select(Some(index));
-        }
+            .or_else(|| (!self.rollups.weekly.is_empty()).then_some(0));
+        self.rollup_week_state.select(weekly_index);
 
-        if let Some(index) = self
+        let monthly_index = self
             .rollups
             .monthly
             .iter()
             .position(|period| period.start <= target_day && period.end >= target_day)
-        {
-            self.rollup_month_state.select(Some(index));
-        }
+            .or_else(|| (!self.rollups.monthly.is_empty()).then_some(0));
+        self.rollup_month_state.select(monthly_index);
 
-        if let Some(index) = self
+        let yearly_index = self
             .rollups
             .yearly
             .iter()
             .position(|period| period.start <= target_day && period.end >= target_day)
-        {
-            self.rollup_year_state.select(Some(index));
-        }
+            .or_else(|| (!self.rollups.yearly.is_empty()).then_some(0));
+        self.rollup_year_state.select(yearly_index);
     }
 
     fn align_rollup_day_selection_to_active_range(&mut self) {
-        let target_day = self.date_range.end_date();
+        let target_day = self.rollup_target_day();
         let daily = self.rollup_daily_for_selected_period();
         if daily.is_empty() {
             self.rollup_day_state.select(None);
@@ -2064,6 +2087,77 @@ impl App {
             .rposition(|day| day.date <= target_day)
             .unwrap_or(0);
         self.rollup_day_state.select(Some(fallback));
+    }
+
+    fn rollup_target_day(&self) -> NaiveDate {
+        let active_day = self.date_range.end_date();
+        match self.rollup_view {
+            RollupView::Weekly | RollupView::Monthly => {
+                if active_day.year() == self.rollup_year_cursor {
+                    active_day
+                } else {
+                    NaiveDate::from_ymd_opt(clamp_year(self.rollup_year_cursor), 1, 1)
+                        .unwrap_or(active_day)
+                }
+            }
+            RollupView::Yearly => {
+                NaiveDate::from_ymd_opt(clamp_year(self.rollup_year_cursor), 1, 1)
+                    .unwrap_or(active_day)
+            }
+        }
+    }
+
+    fn collect_cached_day_coverage_for_range(
+        &self,
+        workspace_id: u64,
+        start: NaiveDate,
+        end: NaiveDate,
+    ) -> HashSet<NaiveDate> {
+        let mut covered = HashSet::new();
+        let Some(cache) = self.cache.as_ref() else {
+            return covered;
+        };
+
+        for key in cache.time_entries.keys() {
+            let Some((cached_workspace, cached_start, cached_end)) = parse_cache_key_bounds(key)
+            else {
+                continue;
+            };
+            if cached_workspace != workspace_id || cached_end < start || cached_start > end {
+                continue;
+            }
+
+            let mut current = cached_start.max(start);
+            let intersection_end = cached_end.min(end);
+            while current <= intersection_end {
+                covered.insert(current);
+                current = current
+                    .succ_opt()
+                    .unwrap_or(current + chrono::Duration::days(1));
+            }
+        }
+
+        covered
+    }
+
+    fn extend_rollup_coverage_with_active_range(
+        &mut self,
+        rollup_start: NaiveDate,
+        rollup_end: NaiveDate,
+    ) {
+        let start = self.date_range.start_date().max(rollup_start);
+        let end = self.date_range.end_date().min(rollup_end);
+        if end < start {
+            return;
+        }
+
+        let mut current = start;
+        while current <= end {
+            self.rollup_fetched_days.insert(current);
+            current = current
+                .succ_opt()
+                .unwrap_or(current + chrono::Duration::days(1));
+        }
     }
 
     fn exit_entries_focus(&mut self) {
@@ -2113,6 +2207,21 @@ impl App {
         self.rollup_view = view;
         self.rebuild_rollups();
         self.ensure_rollup_selections();
+    }
+
+    fn shift_rollup_year(&mut self, direction: i32) {
+        let direction = direction.signum();
+        if direction == 0 {
+            return;
+        }
+        let next = clamp_year(self.rollup_year_cursor.saturating_add(direction));
+        if next == self.rollup_year_cursor {
+            return;
+        }
+        self.rollup_year_cursor = next;
+        self.rebuild_rollups();
+        self.ensure_rollup_selections();
+        self.status = Some(format!("Rollups year: {}", self.rollup_year_cursor));
     }
 
     fn toggle_rollup_focus(&mut self) {
@@ -2396,6 +2505,40 @@ impl App {
     pub fn rollup_selected_period(&self) -> Option<&PeriodRollup> {
         let index = self.rollup_state_for_view(self.rollup_view).selected()?;
         self.rollup_periods().get(index)
+    }
+
+    pub fn rollup_year_cursor(&self) -> i32 {
+        self.rollup_year_cursor
+    }
+
+    pub fn rollup_year_window(&self) -> (i32, i32) {
+        (
+            clamp_year(self.rollup_year_cursor.saturating_sub(2)),
+            clamp_year(self.rollup_year_cursor.saturating_add(5)),
+        )
+    }
+
+    pub fn is_rollup_day_fetched(&self, day: NaiveDate) -> bool {
+        self.rollup_fetched_days.contains(&day)
+    }
+
+    pub fn rollup_fetched_days(&self) -> &HashSet<NaiveDate> {
+        &self.rollup_fetched_days
+    }
+
+    pub fn rollup_period_missing_days(&self, period: &PeriodRollup) -> usize {
+        let mut missing = 0usize;
+        let mut current = period.start;
+        while current <= period.end {
+            if self.is_rollup_day_included(current) && !self.rollup_fetched_days.contains(&current)
+            {
+                missing += 1;
+            }
+            current = current
+                .succ_opt()
+                .unwrap_or(current + chrono::Duration::days(1));
+        }
+        missing
     }
 
     pub fn vacation_days(&self) -> &HashSet<NaiveDate> {
@@ -3332,10 +3475,6 @@ fn parse_cache_key_bounds(key: &str) -> Option<(u64, NaiveDate, NaiveDate)> {
     Some((workspace_id, start, end))
 }
 
-fn month_start(date: NaiveDate) -> NaiveDate {
-    date.with_day(1).unwrap_or(date)
-}
-
 fn year_start(date: NaiveDate) -> NaiveDate {
     NaiveDate::from_ymd_opt(date.year(), 1, 1).unwrap_or(date)
 }
@@ -3344,15 +3483,8 @@ fn year_end(date: NaiveDate) -> NaiveDate {
     NaiveDate::from_ymd_opt(date.year(), 12, 31).unwrap_or(date)
 }
 
-fn month_end(date: NaiveDate) -> NaiveDate {
-    let (year, month) = if date.month() == 12 {
-        (date.year() + 1, 1)
-    } else {
-        (date.year(), date.month() + 1)
-    };
-    NaiveDate::from_ymd_opt(year, month, 1)
-        .and_then(|next| next.pred_opt())
-        .unwrap_or(date)
+fn clamp_year(year: i32) -> i32 {
+    year.clamp(1, 9999)
 }
 
 fn days_between(start: NaiveDate, end: NaiveDate) -> usize {

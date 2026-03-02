@@ -229,12 +229,23 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
                 );
                 let delta = normalize_delta(hours - target);
                 let delta_style = delta_style(delta, theme);
-                let line = Line::from(vec![
+                let missing_days = app.rollup_period_missing_days(period);
+                let mut spans = vec![
                     Span::styled(&period.label, Style::default().add_modifier(Modifier::BOLD)),
                     Span::raw("  "),
                     Span::styled(format!("{:.2}h", hours), theme.muted_style()),
                     Span::styled(format!("  {:+.2}h", delta), delta_style),
-                ]);
+                ];
+                if missing_days > 0 {
+                    spans.push(Span::raw("  "));
+                    spans.push(Span::styled(
+                        format!("!{}d n/f", missing_days),
+                        Style::default()
+                            .fg(theme.highlight)
+                            .add_modifier(Modifier::BOLD),
+                    ));
+                }
+                let line = Line::from(spans);
                 ListItem::new(line).style(theme.panel_style())
             })
             .collect()
@@ -337,6 +348,7 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
         } else {
             0.0
         };
+        let missing_days = app.rollup_period_missing_days(period);
         let mut lines = vec![
             Line::from(Span::styled(
                 period.label.clone(),
@@ -356,6 +368,19 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
                 Span::styled(format!("{:.2}h", overtime), delta_style(overtime, theme)),
             ]),
             Line::from(format!("Avg/day (worked): {:.2}h", avg)),
+            if missing_days == 0 {
+                Line::from(Span::styled("Data: complete", theme.muted_style()))
+            } else {
+                Line::from(vec![
+                    Span::raw("Data: "),
+                    Span::styled(
+                        format!("partial ({} day(s) not fetched)", missing_days),
+                        Style::default()
+                            .fg(theme.highlight)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                ])
+            },
         ];
 
         if let Some(day) = selected_day {
@@ -381,8 +406,13 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
             let day_delta = normalize_delta(hours - day_target);
             let label = day.date.format("%a %Y-%m-%d").to_string();
             let special = special_day_suffix(app, day.date);
+            let fetch_tag = if app.is_rollup_day_fetched(day.date) {
+                String::new()
+            } else {
+                " [not fetched]".to_string()
+            };
             lines.push(Line::from(vec![
-                Span::raw(format!("Selected: {label}{special} ")),
+                Span::raw(format!("Selected: {label}{special}{fetch_tag} ")),
                 Span::styled(format!("{:.2}h", hours), theme.muted_style()),
                 Span::raw(" "),
                 Span::styled(format!("{:+.2}h", day_delta), delta_style(day_delta, theme)),
@@ -415,6 +445,7 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
             app.sick_day_hours(),
             app.credit_vacation_days_as_worked(),
             app.credit_sick_days_as_worked(),
+            app.rollup_fetched_days(),
             app.rollups_week_start,
             theme,
         );
@@ -468,6 +499,13 @@ fn rollups_header_line(app: &App, theme: &Theme) -> Line<'static> {
         WeekStart::Monday => "Mon",
         WeekStart::Sunday => "Sun",
     };
+    let year_info = match app.rollup_view {
+        RollupView::Weekly | RollupView::Monthly => format!("{}", app.rollup_year_cursor()),
+        RollupView::Yearly => {
+            let (start, end) = app.rollup_year_window();
+            format!("{start}..{end} (focus {})", app.rollup_year_cursor())
+        }
+    };
     Line::from(vec![
         Span::styled("Rollups", theme.title_style()),
         Span::raw("  "),
@@ -486,6 +524,10 @@ fn rollups_header_line(app: &App, theme: &Theme) -> Line<'static> {
         Span::styled("Week start", theme.muted_style()),
         Span::raw(": "),
         Span::styled(week_start, Style::default().add_modifier(Modifier::BOLD)),
+        Span::raw("  "),
+        Span::styled("Years", theme.muted_style()),
+        Span::raw(": "),
+        Span::styled(year_info, Style::default().add_modifier(Modifier::BOLD)),
         Span::raw("  "),
         Span::styled("Date", theme.muted_style()),
         Span::raw(": "),
@@ -507,6 +549,8 @@ fn rollups_footer_line(app: &mut App, theme: &Theme) -> Line<'static> {
         Span::styled("m monthly", theme.muted_style()),
         Span::raw(" · "),
         Span::styled("y yearly", theme.muted_style()),
+        Span::raw(" · "),
+        Span::styled("[ / ] year", theme.muted_style()),
         Span::raw(" · "),
         Span::styled("z weekends", theme.muted_style()),
         Span::raw(" · "),
@@ -1144,6 +1188,7 @@ fn build_calendar_lines(
     sick_day_hours: f64,
     credit_vacation_days_as_worked: bool,
     credit_sick_days_as_worked: bool,
+    fetched_days: &HashSet<NaiveDate>,
     week_start: WeekStart,
     theme: &Theme,
 ) -> CalendarRender {
@@ -1161,6 +1206,7 @@ fn build_calendar_lines(
             sick_day_hours,
             credit_vacation_days_as_worked,
             credit_sick_days_as_worked,
+            fetched_days,
             week_start,
             theme,
         )
@@ -1178,6 +1224,7 @@ fn build_calendar_lines(
             sick_day_hours,
             credit_vacation_days_as_worked,
             credit_sick_days_as_worked,
+            fetched_days,
             week_start,
             theme,
         )
@@ -1197,6 +1244,7 @@ fn build_period_calendar_grid_lines(
     sick_day_hours: f64,
     credit_vacation_days_as_worked: bool,
     credit_sick_days_as_worked: bool,
+    fetched_days: &HashSet<NaiveDate>,
     week_start: WeekStart,
     theme: &Theme,
 ) -> CalendarRender {
@@ -1315,6 +1363,7 @@ fn build_period_calendar_grid_lines(
         for cell in week {
             match cell {
                 Some(date) => {
+                    let is_fetched = fetched_days.contains(date);
                     let worked_hours = hours_from_seconds(*map.get(date).unwrap_or(&0));
                     let hours = effective_hours_for_day(
                         *date,
@@ -1338,7 +1387,13 @@ fn build_period_calendar_grid_lines(
                                 sick_day_hours,
                             ),
                     );
-                    let mut style = delta_style(delta, theme).add_modifier(Modifier::BOLD);
+                    let mut style = if is_fetched {
+                        delta_style(delta, theme).add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default()
+                            .fg(theme.highlight)
+                            .add_modifier(Modifier::BOLD)
+                    };
                     if *date == today {
                         style = style.fg(Color::Yellow).add_modifier(Modifier::BOLD);
                     }
@@ -1355,7 +1410,13 @@ fn build_period_calendar_grid_lines(
                     if *date == today {
                         style = style.add_modifier(Modifier::UNDERLINED);
                     }
-                    let day_label = if sick_days.contains(date) {
+                    let day_label = if !is_fetched && sick_days.contains(date) {
+                        format!("{:02}S?", date.day())
+                    } else if !is_fetched && vacation_days.contains(date) {
+                        format!("{:02}V?", date.day())
+                    } else if !is_fetched {
+                        format!("{:02}?", date.day())
+                    } else if sick_days.contains(date) {
                         format!("{:02}S", date.day())
                     } else if vacation_days.contains(date) {
                         format!("{:02}V", date.day())
@@ -1363,8 +1424,13 @@ fn build_period_calendar_grid_lines(
                         format!("{:02}", date.day())
                     };
                     day_values.push((format!("{:^width$}", day_label, width = cell_width), style));
+                    let hours_label = if is_fetched {
+                        format!("{:.2}h", hours)
+                    } else {
+                        "n/f".to_string()
+                    };
                     hour_values.push((
-                        format!("{:^width$}", format!("{:.2}h", hours), width = cell_width),
+                        format!("{:^width$}", hours_label, width = cell_width),
                         style,
                     ));
                 }
@@ -1411,6 +1477,7 @@ fn build_yearly_calendar_lines(
     sick_day_hours: f64,
     credit_vacation_days_as_worked: bool,
     credit_sick_days_as_worked: bool,
+    fetched_days: &HashSet<NaiveDate>,
     week_start: WeekStart,
     theme: &Theme,
 ) -> CalendarRender {
@@ -1460,6 +1527,7 @@ fn build_yearly_calendar_lines(
                 sick_day_hours,
                 credit_vacation_days_as_worked,
                 credit_sick_days_as_worked,
+                fetched_days,
                 week_start,
                 theme,
             );
@@ -1617,6 +1685,10 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
         Row::new(vec![
             Cell::from(Span::styled("w / m / y", key_style)),
             Cell::from("Weekly / monthly / yearly view"),
+        ]),
+        Row::new(vec![
+            Cell::from(Span::styled("[ / ]", key_style)),
+            Cell::from("Previous / next rollup year"),
         ]),
         Row::new(vec![
             Cell::from(Span::styled("z", key_style)),
