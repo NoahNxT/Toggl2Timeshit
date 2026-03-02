@@ -6,6 +6,20 @@ This file is auto-updated by the release workflow.
 ## Unreleased
 
 - Work in progress.
+## v1.9.0 - 2026-03-02
+
+- :arrow_up: Updates Rust dependencies
+- 🐛 fix: rebuild rollups when opening rollups view
+- 📝 docs: document rollup year navigation and n/f markers
+- ✨ feat: add calendar-year rollup navigation and fetch-coverage indicators
+- ✨ feat: add changelog link to update-available popup
+- 📝 docs: document separate sick/vacation credit toggles
+- ✨ feat: add separate sick and vacation credit toggles
+- 📝 docs: document vacation and sick day shortcuts/settings
+- ✨ feat: add sick days and configurable special-day target hours
+- Bump chrono from 0.4.43 to 0.4.44
+- Bump tempfile from 3.25.0 to 3.26.0
+
 ## v1.8.1 - 2026-02-23
 
 - :arrow_up: Updates version and README
