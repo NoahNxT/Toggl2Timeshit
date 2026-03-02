@@ -131,6 +131,7 @@ Date range selection is done inside the TUI (`d`).
 - `w` weekly view
 - `m` monthly view
 - `y` yearly view
+- `[` / `]` previous / next rollup year
 - `Shift+R` refetch selected day/week/month/year
 - `z` toggle weekends in rollups
 - `k` toggle vacation day for selected day

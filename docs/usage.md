@@ -27,6 +27,7 @@
 - `w`: Weekly rollups
 - `m`: Monthly rollups
 - `y`: Yearly rollups
+- `[` / `]`: Previous/next rollup year
 - `Tab`: Switch focus between periods and days
 - `Up/Down`: Navigate periods or days
 - `Left/Right`: Move one step in period/day lists
@@ -34,6 +35,10 @@
 - `j`: Toggle sick day for selected day
 - `Shift+R`: Refetch selected day/week/month/year from Toggl API
 - `Esc`: Back to dashboard
+
+Rollups data coverage:
+- Period rows show `!Nd n/f` when `N` included days are not fetched.
+- Calendar shows `n/f` and `?` markers for days not fetched yet.
 
 ## Clipboard
 - `c`: Copy **all entries for the selected client**
