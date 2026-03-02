@@ -985,6 +985,7 @@ impl App {
 
     fn enter_rollups(&mut self) {
         self.rollup_focus = RollupFocus::Periods;
+        self.rebuild_rollups();
         self.ensure_rollup_selections();
         self.mode = Mode::Rollups;
         self.status = None;
