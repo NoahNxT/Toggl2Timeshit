@@ -49,6 +49,13 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         }
     }
 
+    if matches!(app.mode, Mode::Dashboard | Mode::Rollups)
+        && !app.show_help
+        && app.should_show_update_popup()
+    {
+        draw_update_popup(frame, app, size, &theme);
+    }
+
     if app.show_help {
         draw_help(frame, app, size, &theme);
     }
@@ -628,6 +635,50 @@ fn draw_overlay(frame: &mut Frame, area: Rect, message: &str, theme: &Theme) {
     frame.render_widget(paragraph, block);
 }
 
+fn draw_update_popup(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
+    let Some(info) = app.update_info.as_ref() else {
+        return;
+    };
+
+    let block = centered_rect(78, 40, area);
+    frame.render_widget(Clear, block);
+
+    let action = if app.update_installable {
+        "Press u to install now."
+    } else {
+        "Update via your package manager."
+    };
+    let changelog_link = terminal_hyperlink("Open changelog", &info.changelog_url);
+
+    let lines = vec![
+        Line::from(Span::styled(
+            "A new version is available",
+            Style::default().add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(format!("Current: v{}", update::current_version())),
+        Line::from(format!("Latest:  v{}", info.latest)),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("Changelog: ", theme.muted_style()),
+            Span::raw(changelog_link),
+        ]),
+        Line::from(Span::styled(
+            info.changelog_url.clone(),
+            theme.muted_style(),
+        )),
+        Line::from(""),
+        Line::from(action),
+        Line::from("Enter or Esc dismiss"),
+    ];
+
+    let paragraph = Paragraph::new(lines)
+        .alignment(Alignment::Left)
+        .block(panel_block("Update Available", theme))
+        .wrap(Wrap { trim: true });
+    frame.render_widget(paragraph, block);
+}
+
 fn draw_login(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
     let block = centered_rect(70, 30, area);
     frame.render_widget(Clear, block);
@@ -807,6 +858,10 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
         ])
         .split(popup_layout[1]);
     vertical[1]
+}
+
+fn terminal_hyperlink(label: &str, url: &str) -> String {
+    format!("\u{1b}]8;;{url}\u{1b}\\{label}\u{1b}]8;;\u{1b}\\")
 }
 
 fn draw_toast(frame: &mut Frame, area: Rect, message: &str, is_error: bool, theme: &Theme) {

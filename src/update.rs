@@ -24,6 +24,7 @@ mod enabled {
         pub latest: Version,
         pub asset_name: String,
         pub url: String,
+        pub changelog_url: String,
     }
 
     #[derive(Debug)]
@@ -50,6 +51,7 @@ mod enabled {
     #[derive(Deserialize)]
     struct Release {
         tag_name: String,
+        html_url: String,
         assets: Vec<ReleaseAsset>,
     }
 
@@ -112,6 +114,7 @@ mod enabled {
         let candidates = expected_asset_candidates()?;
         let candidate_set: std::collections::HashSet<String> =
             candidates.iter().map(|name| name.to_lowercase()).collect();
+        let changelog_url = release.html_url.clone();
         let asset = release
             .assets
             .into_iter()
@@ -127,6 +130,7 @@ mod enabled {
             latest,
             asset_name: asset.name,
             url: asset.browser_download_url,
+            changelog_url,
         }))
     }
 
@@ -330,6 +334,7 @@ mod disabled {
         pub latest: Version,
         pub asset_name: String,
         pub url: String,
+        pub changelog_url: String,
     }
 
     #[derive(Debug)]
