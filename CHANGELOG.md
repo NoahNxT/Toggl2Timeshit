@@ -6,6 +6,14 @@ This file is auto-updated by the release workflow.
 ## Unreleased
 
 - Work in progress.
+## v1.9.1 - 2026-03-26
+
+- build(deps): bump tar from 0.4.44 to 0.4.45
+- build(deps): bump sha2 from 0.10.9 to 0.11.0
+- build(deps): bump zip from 8.1.0 to 8.4.0
+- build(deps): bump tempfile from 3.26.0 to 3.27.0
+- build(deps): bump quinn-proto in the cargo group across 1 directory
+
 ## v1.9.0 - 2026-03-02
 
 - :arrow_up: Updates Rust dependencies

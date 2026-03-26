@@ -43,7 +43,7 @@ npm remove -g toggl2timeshit
 choco install timeshit
 ```
 ```powershell
-choco install timeshit --version=1.9.0
+choco install timeshit --version=1.9.1
 ```
 
 **Scoop**
