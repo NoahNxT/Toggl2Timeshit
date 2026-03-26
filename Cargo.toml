@@ -7,7 +7,7 @@ license = "MIT"
 
 [dependencies]
 base64 = "0.22.1"
-sha2 = "0.10.9"
+sha2 = "0.11.0"
 arboard = "3.6.1"
 chrono = { version = "0.4.44", features = ["clock", "serde"] }
 crossterm = "0.29.0"
