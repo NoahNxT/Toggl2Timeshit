@@ -22,9 +22,15 @@ mod enabled {
     #[derive(Debug, Clone)]
     pub struct UpdateInfo {
         pub latest: Version,
-        pub asset_name: String,
-        pub url: String,
+        pub asset_name: Option<String>,
+        pub url: Option<String>,
         pub changelog_url: String,
+    }
+
+    impl UpdateInfo {
+        pub fn has_download(&self) -> bool {
+            self.asset_name.is_some() && self.url.is_some()
+        }
     }
 
     #[derive(Debug)]
@@ -55,7 +61,7 @@ mod enabled {
         assets: Vec<ReleaseAsset>,
     }
 
-    #[derive(Deserialize)]
+    #[derive(Clone, Deserialize)]
     struct ReleaseAsset {
         name: String,
         browser_download_url: String,
@@ -103,41 +109,23 @@ mod enabled {
             .json()
             .map_err(|err| UpdateError::Parse(err.to_string()))?;
 
-        let trimmed = release.tag_name.trim().trim_start_matches('v');
-        let latest = Version::parse(trimmed).map_err(|err| UpdateError::Parse(err.to_string()))?;
-        let current = current_version();
-
-        if latest <= current {
-            return Ok(None);
-        }
-
-        let candidates = expected_asset_candidates()?;
-        let candidate_set: std::collections::HashSet<String> =
-            candidates.iter().map(|name| name.to_lowercase()).collect();
-        let changelog_url = release.html_url.clone();
-        let asset = release
-            .assets
-            .into_iter()
-            .find(|asset| candidate_set.contains(&asset.name.to_lowercase()))
-            .ok_or_else(|| {
-                UpdateError::Parse(format!(
-                    "Release asset {} not found",
-                    candidates.join(" or ")
-                ))
-            })?;
-
-        Ok(Some(UpdateInfo {
-            latest,
-            asset_name: asset.name,
-            url: asset.browser_download_url,
-            changelog_url,
-        }))
+        resolve_update_info(release, &current_version())
     }
 
     pub fn download_and_extract(info: &UpdateInfo) -> Result<PathBuf, UpdateError> {
+        let asset_name = info.asset_name.as_deref().ok_or_else(|| {
+            UpdateError::Unsupported(
+                "No downloadable update asset found for this release".to_string(),
+            )
+        })?;
+        let url = info.url.as_deref().ok_or_else(|| {
+            UpdateError::Unsupported(
+                "No downloadable update asset found for this release".to_string(),
+            )
+        })?;
         let client = build_client()?;
         let response = client
-            .get(&info.url)
+            .get(url)
             .send()
             .map_err(|err| UpdateError::Network(err.to_string()))?;
 
@@ -153,7 +141,7 @@ mod enabled {
             .tempdir()
             .map_err(|err| UpdateError::Io(err.to_string()))?;
 
-        let archive_path = tempdir.path().join(&info.asset_name);
+        let archive_path = tempdir.path().join(asset_name);
         let mut archive_file =
             File::create(&archive_path).map_err(|err| UpdateError::Io(err.to_string()))?;
         let mut reader = response;
@@ -161,7 +149,7 @@ mod enabled {
 
         let archive_file =
             File::open(&archive_path).map_err(|err| UpdateError::Io(err.to_string()))?;
-        if info.asset_name.ends_with(".zip") {
+        if asset_name.ends_with(".zip") {
             let mut archive =
                 ZipArchive::new(archive_file).map_err(|err| UpdateError::Io(err.to_string()))?;
             archive
@@ -219,14 +207,47 @@ mod enabled {
             .map_err(|err| UpdateError::Network(err.to_string()))
     }
 
-    fn expected_asset_candidates() -> Result<Vec<String>, UpdateError> {
+    fn resolve_update_info(
+        release: Release,
+        current: &Version,
+    ) -> Result<Option<UpdateInfo>, UpdateError> {
+        let trimmed = release.tag_name.trim().trim_start_matches('v');
+        let latest = Version::parse(trimmed).map_err(|err| UpdateError::Parse(err.to_string()))?;
+        if latest <= *current {
+            return Ok(None);
+        }
+
+        let asset = find_matching_release_asset(&release.assets);
+
+        Ok(Some(UpdateInfo {
+            latest,
+            asset_name: asset.as_ref().map(|value| value.name.clone()),
+            url: asset.map(|value| value.browser_download_url),
+            changelog_url: release.html_url,
+        }))
+    }
+
+    fn find_matching_release_asset(assets: &[ReleaseAsset]) -> Option<ReleaseAsset> {
+        let candidates = expected_asset_candidates()?;
+        let candidate_set: std::collections::HashSet<String> = candidates
+            .into_iter()
+            .map(|name| name.to_lowercase())
+            .collect();
+
+        assets
+            .iter()
+            .find(|asset| candidate_set.contains(&asset.name.to_lowercase()))
+            .cloned()
+    }
+
+    fn expected_asset_candidates() -> Option<Vec<String>> {
         let assets = match env::consts::OS {
             "linux" => vec!["timeshit-linux.tar.gz", "timeshit-Linux.tar.gz"],
             "macos" => vec!["timeshit-macos.tar.gz", "timeshit-macOS.tar.gz"],
             "windows" => vec!["timeshit-windows.zip", "timeshit-Windows.zip"],
-            other => return Err(UpdateError::Unsupported(format!("Unsupported OS: {other}"))),
+            _ => return None,
         };
-        Ok(assets.into_iter().map(|value| value.to_string()).collect())
+        Some(assets.into_iter().map(|value| value.to_string()).collect())
     }
 
     fn expected_binary_candidates() -> Result<Vec<String>, UpdateError> {
@@ -312,6 +333,62 @@ mod enabled {
         fs::rename(temp_path, current_exe).map_err(|err| UpdateError::Io(err.to_string()))?;
         Ok(())
     }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn newer_release_still_returns_update_without_matching_asset() {
+            let release = Release {
+                tag_name: "v1.2.0".to_string(),
+                html_url: "https://example.com/releases/v1.2.0".to_string(),
+                assets: vec![],
+            };
+
+            let info = resolve_update_info(release, &Version::parse("1.1.0").unwrap())
+                .unwrap()
+                .expect("expected update info");
+
+            assert_eq!(info.latest, Version::parse("1.2.0").unwrap());
+            assert!(!info.has_download());
+        }
+
+        #[test]
+        fn current_release_returns_none() {
+            let release = Release {
+                tag_name: "v1.2.0".to_string(),
+                html_url: "https://example.com/releases/v1.2.0".to_string(),
+                assets: vec![],
+            };
+
+            let info = resolve_update_info(release, &Version::parse("1.2.0").unwrap()).unwrap();
+
+            assert!(info.is_none());
+        }
+
+        #[test]
+        fn matching_asset_keeps_download_available() {
+            let Some(candidate) = expected_asset_candidates().and_then(|mut values| values.pop())
+            else {
+                return;
+            };
+            let release = Release {
+                tag_name: "v1.2.0".to_string(),
+                html_url: "https://example.com/releases/v1.2.0".to_string(),
+                assets: vec![ReleaseAsset {
+                    name: candidate,
+                    browser_download_url: "https://example.com/download".to_string(),
+                }],
+            };
+
+            let info = resolve_update_info(release, &Version::parse("1.1.0").unwrap())
+                .unwrap()
+                .expect("expected update info");
+
+            assert!(info.has_download());
+        }
+    }
 }
 
 #[cfg(not(feature = "update"))]
@@ -332,9 +409,15 @@ mod disabled {
     #[derive(Debug, Clone)]
     pub struct UpdateInfo {
         pub latest: Version,
-        pub asset_name: String,
-        pub url: String,
+        pub asset_name: Option<String>,
+        pub url: Option<String>,
         pub changelog_url: String,
+    }
+
+    impl UpdateInfo {
+        pub fn has_download(&self) -> bool {
+            self.asset_name.is_some() && self.url.is_some()
+        }
     }
 
     #[derive(Debug)]

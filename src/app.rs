@@ -361,9 +361,15 @@ impl App {
 
         match update::check_for_update() {
             Ok(Some(info)) => {
-                self.update_installable = update::can_self_update();
+                let can_self_update = update::can_self_update();
+                self.update_installable = can_self_update && info.has_download();
                 let message = if self.update_installable {
                     format!("Update available: v{} (press u to update)", info.latest)
+                } else if can_self_update {
+                    format!(
+                        "Update available: v{} (download the latest GitHub release)",
+                        info.latest
+                    )
                 } else {
                     format!(
                         "Update available: v{} (update via package manager)",
@@ -704,6 +710,14 @@ impl App {
         self.resume_from_update();
     }
 
+    fn notify_update_install_unavailable(&mut self) {
+        if update::can_self_update() {
+            self.set_toast("Download the latest release from GitHub.", false);
+        } else {
+            self.set_toast("Update via package manager.", false);
+        }
+    }
+
     fn handle_dashboard_input(&mut self, key: KeyEvent) {
         if self.show_help {
             match key.code {
@@ -727,7 +741,7 @@ impl App {
                     if self.update_info.is_some() && self.update_installable {
                         self.start_update();
                     } else if self.update_info.is_some() {
-                        self.set_toast("Update via package manager.", false);
+                        self.notify_update_install_unavailable();
                     }
                     return;
                 }
@@ -760,7 +774,7 @@ impl App {
                 if self.update_info.is_some() && self.update_installable {
                     self.start_update();
                 } else if self.update_info.is_some() {
-                    self.set_toast("Update via package manager.", false);
+                    self.notify_update_install_unavailable();
                 } else if update::should_check_updates() {
                     self.set_toast("No update available.", false);
                 } else {
@@ -825,7 +839,7 @@ impl App {
                     if self.update_info.is_some() && self.update_installable {
                         self.start_update();
                     } else if self.update_info.is_some() {
-                        self.set_toast("Update via package manager.", false);
+                        self.notify_update_install_unavailable();
                     }
                     return;
                 }
