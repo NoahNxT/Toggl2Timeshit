@@ -531,7 +531,6 @@ mod tests {
             Self {
                 settings: Mutex::new(ThemeSettings {
                     active_theme: ThemeSelection::builtin(ThemePreference::Dark),
-                    fallback_theme: ThemePreference::Dark,
                     custom_themes: vec![CustomTheme {
                         id: "theme-1".to_string(),
                         name: "Aurora".to_string(),
@@ -600,7 +599,7 @@ mod tests {
             settings.custom_themes.retain(|theme| theme.id != id);
             if matches!(settings.active_theme, ThemeSelection::Custom { id: ref active_id } if active_id == id)
             {
-                settings.active_theme = ThemeSelection::builtin(settings.fallback_theme);
+                settings.active_theme = ThemeSelection::builtin(ThemePreference::Dark);
             }
             Ok(settings.clone())
         }

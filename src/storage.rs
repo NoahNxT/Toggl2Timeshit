@@ -74,7 +74,6 @@ fn token_path() -> Option<PathBuf> {
 #[derive(Debug, Clone)]
 pub struct ThemeSettings {
     pub active_theme: ThemeSelection,
-    pub fallback_theme: ThemePreference,
     pub custom_themes: Vec<CustomTheme>,
 }
 
@@ -178,7 +177,6 @@ pub fn read_theme_settings() -> ThemeSettings {
         .map(|config| theme_settings_from_config(&config))
         .unwrap_or_else(|| ThemeSettings {
             active_theme: ThemeSelection::builtin(ThemePreference::Terminal),
-            fallback_theme: ThemePreference::Terminal,
             custom_themes: Vec::new(),
         })
 }
@@ -287,7 +285,6 @@ fn theme_settings_from_config(config: &Config) -> ThemeSettings {
 
     ThemeSettings {
         active_theme,
-        fallback_theme,
         custom_themes,
     }
 }
