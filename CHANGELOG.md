@@ -9,6 +9,22 @@ This file is auto-updated by the release workflow.
 - 🐛 fix: calculate rollup overtime across the full selected period
 - ✨ feat: split special-day target hours from worked-credit hours in settings
 - 📝 docs: document signed overtime balances and special-day target/credit settings
+## v1.10.0 - 2026-03-27
+
+- 👷 build theme studio in CI and stop tracking dist
+- 🧹 remove leftover theme storage warning
+- 💄 add bun-powered theme studio frontend and docs
+- ✨ add theme studio runtime and custom theme storage
+- 🎨 polish update dialog styling and emoji notes
+- ✨ remove duplicate update toast
+- ♻️ switch update action to GitHub release page
+- 🔧 only open update browser action on demand
+- 🩹 improve update dialog changelog and guidance
+- 🧪 add forced update dialog override
+- 🐛 fix rollup special-day targets and overtime balance
+- 🐛 fix update dialog version check
+- :arrow_up: bump rustls-webpki to 0.103.10
+
 ## v1.9.1 - 2026-03-26
 
 - build(deps): bump tar from 0.4.44 to 0.4.45
