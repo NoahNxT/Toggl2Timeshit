@@ -8,7 +8,7 @@ Timeshit is a Rust-based Terminal UI (TUI) that turns Toggl Track time entries i
 - Rollups with signed overtime balances and special-day target/credit handling
 - Clipboard export for timesheet tools
 - Cache-first design to reduce Toggl API usage
-- Built-in settings (target hours, integrations, theme)
+- Built-in settings (target hours, integrations, seven built-in themes)
 
 ## Screenshots
 ![Dashboard](docs/images/dashboard.png)

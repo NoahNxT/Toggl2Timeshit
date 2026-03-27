@@ -60,7 +60,7 @@ Total hours: 8.00h
 ## Help & Settings
 - `h`: Help modal
 - `s`: Settings modal
-- `m`: Toggle light/dark theme
+- `m`: Cycle built-in themes
 
 Settings → General includes optional **time rounding** (increment + mode).
 

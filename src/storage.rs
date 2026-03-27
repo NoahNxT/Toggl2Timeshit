@@ -5,19 +5,16 @@ use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::io;
+use std::path::Path;
 use std::path::PathBuf;
 
 use crate::models::{Client as TogglClientModel, Project, TimeEntry, Workspace};
 use crate::rollups::WeekStart;
 use crate::rounding::RoundingConfig;
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum ThemePreference {
-    Terminal,
-    Light,
-    Dark,
-}
+use crate::theme::{
+    CustomTheme, ThemePalette, ThemePreference, ThemeSelection, find_custom_theme,
+    sorted_custom_themes, validate_theme_name,
+};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CachedData<T> {
@@ -74,19 +71,50 @@ fn token_path() -> Option<PathBuf> {
     Some(path)
 }
 
-pub fn read_theme() -> Option<ThemePreference> {
-    read_config().and_then(|config| config.theme)
+#[derive(Debug, Clone)]
+pub struct ThemeSettings {
+    pub active_theme: ThemeSelection,
+    pub fallback_theme: ThemePreference,
+    pub custom_themes: Vec<CustomTheme>,
 }
 
-pub fn write_theme(theme: ThemePreference) -> Result<(), io::Error> {
-    let mut config = read_config().unwrap_or_default();
-    config.theme = Some(theme);
-    write_config(&config)
+#[derive(Debug, Clone)]
+pub struct ThemeDraft {
+    pub id: Option<String>,
+    pub name: String,
+    pub palette: ThemePalette,
+}
+
+#[derive(Debug)]
+pub enum ThemeConfigError {
+    Io(io::Error),
+    Validation(String),
+}
+
+impl std::fmt::Display for ThemeConfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Io(err) => write!(f, "{err}"),
+            Self::Validation(message) => write!(f, "{message}"),
+        }
+    }
+}
+
+impl std::error::Error for ThemeConfigError {}
+
+impl From<io::Error> for ThemeConfigError {
+    fn from(value: io::Error) -> Self {
+        Self::Io(value)
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 struct Config {
     theme: Option<ThemePreference>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    active_theme: Option<ThemeSelection>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    custom_themes: Vec<CustomTheme>,
     target_hours: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     rounding: Option<RoundingConfig>,
@@ -143,6 +171,199 @@ fn config_path() -> Option<PathBuf> {
     let mut path = dirs::home_dir()?;
     path.push(".toggl2tsc.json");
     Some(path)
+}
+
+pub fn read_theme_settings() -> ThemeSettings {
+    read_config()
+        .map(|config| theme_settings_from_config(&config))
+        .unwrap_or_else(|| ThemeSettings {
+            active_theme: ThemeSelection::builtin(ThemePreference::Terminal),
+            fallback_theme: ThemePreference::Terminal,
+            custom_themes: Vec::new(),
+        })
+}
+
+pub fn write_theme_selection(
+    selection: &ThemeSelection,
+) -> Result<ThemeSettings, ThemeConfigError> {
+    let mut config = read_config().unwrap_or_default();
+    let custom_themes = normalize_custom_themes(&config.custom_themes);
+    match selection {
+        ThemeSelection::Builtin { theme } => {
+            config.theme = Some(*theme);
+        }
+        ThemeSelection::Custom { id } => {
+            if find_custom_theme(&custom_themes, id).is_none() {
+                return Err(ThemeConfigError::Validation(
+                    "Selected custom theme was not found.".to_string(),
+                ));
+            }
+        }
+    }
+    config.active_theme = Some(selection.clone());
+    config.custom_themes = custom_themes;
+    write_config(&config)?;
+    Ok(theme_settings_from_config(&config))
+}
+
+pub fn save_custom_theme(draft: ThemeDraft) -> Result<ThemeSettings, ThemeConfigError> {
+    let mut config = read_config().unwrap_or_default();
+    let mut custom_themes = normalize_custom_themes(&config.custom_themes);
+    let normalized_name = validate_theme_name(&draft.name).map_err(ThemeConfigError::Validation)?;
+    let normalized_palette = draft
+        .palette
+        .normalized()
+        .map_err(ThemeConfigError::Validation)?;
+    let now = now_rfc3339();
+
+    if let Some(id) = draft.id.as_deref() {
+        let Some(index) = custom_themes.iter().position(|theme| theme.id == id) else {
+            return Err(ThemeConfigError::Validation(
+                "Custom theme to update was not found.".to_string(),
+            ));
+        };
+        if has_duplicate_custom_name(&custom_themes, &normalized_name, Some(id)) {
+            return Err(ThemeConfigError::Validation(
+                "Theme name must be unique.".to_string(),
+            ));
+        }
+        let created_at = custom_themes[index].created_at.clone();
+        custom_themes[index] = CustomTheme {
+            id: id.to_string(),
+            name: normalized_name,
+            palette: normalized_palette,
+            created_at,
+            updated_at: now,
+        };
+    } else {
+        if has_duplicate_custom_name(&custom_themes, &normalized_name, None) {
+            return Err(ThemeConfigError::Validation(
+                "Theme name must be unique.".to_string(),
+            ));
+        }
+        let id = generate_custom_theme_id(&normalized_name, &custom_themes);
+        custom_themes.push(CustomTheme {
+            id,
+            name: normalized_name,
+            palette: normalized_palette,
+            created_at: now.clone(),
+            updated_at: now,
+        });
+    }
+
+    config.custom_themes = custom_themes;
+    write_config(&config)?;
+    Ok(theme_settings_from_config(&config))
+}
+
+pub fn delete_custom_theme(id: &str) -> Result<ThemeSettings, ThemeConfigError> {
+    let mut config = read_config().unwrap_or_default();
+    let mut custom_themes = normalize_custom_themes(&config.custom_themes);
+    let previous_len = custom_themes.len();
+    custom_themes.retain(|theme| theme.id != id);
+    if custom_themes.len() == previous_len {
+        return Err(ThemeConfigError::Validation(
+            "Custom theme to delete was not found.".to_string(),
+        ));
+    }
+
+    if matches!(config.active_theme, Some(ThemeSelection::Custom { id: ref active_id }) if active_id == id)
+    {
+        config.active_theme = Some(ThemeSelection::builtin(
+            config.theme.unwrap_or(ThemePreference::Terminal),
+        ));
+    }
+
+    config.custom_themes = custom_themes;
+    write_config(&config)?;
+    Ok(theme_settings_from_config(&config))
+}
+
+fn theme_settings_from_config(config: &Config) -> ThemeSettings {
+    let custom_themes = normalize_custom_themes(&config.custom_themes);
+    let fallback_theme = config.theme.unwrap_or(ThemePreference::Terminal);
+    let active_theme =
+        resolve_active_theme(config.active_theme.as_ref(), fallback_theme, &custom_themes);
+
+    ThemeSettings {
+        active_theme,
+        fallback_theme,
+        custom_themes,
+    }
+}
+
+fn resolve_active_theme(
+    active_theme: Option<&ThemeSelection>,
+    fallback_theme: ThemePreference,
+    custom_themes: &[CustomTheme],
+) -> ThemeSelection {
+    match active_theme {
+        Some(ThemeSelection::Builtin { theme }) => ThemeSelection::builtin(*theme),
+        Some(ThemeSelection::Custom { id }) if find_custom_theme(custom_themes, id).is_some() => {
+            ThemeSelection::custom(id.to_string())
+        }
+        _ => ThemeSelection::builtin(fallback_theme),
+    }
+}
+
+fn normalize_custom_themes(custom_themes: &[CustomTheme]) -> Vec<CustomTheme> {
+    let mut normalized = Vec::new();
+    let mut names = HashSet::new();
+
+    for theme in custom_themes {
+        let Some(next_theme) = normalize_custom_theme(theme) else {
+            continue;
+        };
+        let key = next_theme.name.to_ascii_lowercase();
+        if !names.insert(key) {
+            continue;
+        }
+        normalized.push(next_theme);
+    }
+
+    sorted_custom_themes(&normalized)
+}
+
+fn normalize_custom_theme(theme: &CustomTheme) -> Option<CustomTheme> {
+    if theme.id.trim().is_empty() {
+        return None;
+    }
+    let name = validate_theme_name(&theme.name).ok()?;
+    let palette = theme.palette.normalized().ok()?;
+
+    Some(CustomTheme {
+        id: theme.id.trim().to_string(),
+        name,
+        palette,
+        created_at: theme.created_at.clone(),
+        updated_at: theme.updated_at.clone(),
+    })
+}
+
+fn has_duplicate_custom_name(
+    custom_themes: &[CustomTheme],
+    name: &str,
+    ignore_id: Option<&str>,
+) -> bool {
+    let needle = name.to_ascii_lowercase();
+    custom_themes.iter().any(|theme| {
+        if ignore_id.is_some() && ignore_id == Some(theme.id.as_str()) {
+            return false;
+        }
+        theme.name.to_ascii_lowercase() == needle
+    })
+}
+
+fn generate_custom_theme_id(name: &str, custom_themes: &[CustomTheme]) -> String {
+    for attempt in 0..100 {
+        let seed = format!("{name}|{}|{attempt}", now_rfc3339());
+        let id = format!("theme-{}", &hash_token(&seed)[..12]);
+        if find_custom_theme(custom_themes, &id).is_none() {
+            return id;
+        }
+    }
+
+    format!("theme-{}", &hash_token(&format!("{name}|fallback"))[..12])
 }
 
 pub fn read_target_hours() -> Option<f64> {
@@ -321,15 +542,23 @@ fn format_day_list(values: &HashSet<NaiveDate>) -> Vec<String> {
 
 fn read_config() -> Option<Config> {
     let path = config_path()?;
-    let contents = fs::read_to_string(path).ok()?;
-    serde_json::from_str(&contents).ok()
+    read_config_from_path(&path)
 }
 
 fn write_config(config: &Config) -> Result<(), io::Error> {
     let path = config_path()
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Home directory not found"))?;
-    let json = serde_json::to_string_pretty(config)
-        .map_err(|err| io::Error::new(io::ErrorKind::Other, err.to_string()))?;
+    write_config_to_path(&path, config)
+}
+
+fn read_config_from_path(path: &Path) -> Option<Config> {
+    let contents = fs::read_to_string(path).ok()?;
+    serde_json::from_str(&contents).ok()
+}
+
+fn write_config_to_path(path: &Path, config: &Config) -> Result<(), io::Error> {
+    let json =
+        serde_json::to_string_pretty(config).map_err(|err| io::Error::other(err.to_string()))?;
     fs::write(path, json)
 }
 
@@ -346,8 +575,8 @@ pub fn read_cache() -> Option<CacheFile> {
 pub fn write_cache(cache: &CacheFile) -> Result<(), io::Error> {
     let path = cache_path()
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Home directory not found"))?;
-    let json = serde_json::to_string_pretty(cache)
-        .map_err(|err| io::Error::new(io::ErrorKind::Other, err.to_string()))?;
+    let json =
+        serde_json::to_string_pretty(cache).map_err(|err| io::Error::other(err.to_string()))?;
     fs::write(path, json)
 }
 
@@ -383,8 +612,8 @@ pub fn read_quota() -> QuotaFile {
 pub fn write_quota(quota: &QuotaFile) -> Result<(), io::Error> {
     let path = quota_path()
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Home directory not found"))?;
-    let json = serde_json::to_string_pretty(quota)
-        .map_err(|err| io::Error::new(io::ErrorKind::Other, err.to_string()))?;
+    let json =
+        serde_json::to_string_pretty(quota).map_err(|err| io::Error::other(err.to_string()))?;
     fs::write(path, json)
 }
 
@@ -545,5 +774,94 @@ mod tests {
     #[test]
     fn default_credit_special_days_is_enabled() {
         assert!(default_credit_special_days_as_worked());
+    }
+
+    #[test]
+    fn legacy_theme_still_loads_without_active_theme() {
+        let config = Config {
+            theme: Some(ThemePreference::Dark),
+            ..Config::default()
+        };
+
+        assert_eq!(
+            theme_settings_from_config(&config).active_theme,
+            ThemeSelection::builtin(ThemePreference::Dark)
+        );
+    }
+
+    #[test]
+    fn invalid_active_custom_theme_falls_back_to_legacy_builtin() {
+        let config = Config {
+            theme: Some(ThemePreference::TokyoNight),
+            active_theme: Some(ThemeSelection::custom("missing")),
+            ..Config::default()
+        };
+
+        assert_eq!(
+            theme_settings_from_config(&config).active_theme,
+            ThemeSelection::builtin(ThemePreference::TokyoNight)
+        );
+    }
+
+    #[test]
+    fn duplicate_custom_theme_names_are_rejected_case_insensitively() {
+        let custom_themes = vec![CustomTheme {
+            id: "theme-1".to_string(),
+            name: "Aurora".to_string(),
+            palette: ThemePalette {
+                panel: "#111111".to_string(),
+                border: "#222222".to_string(),
+                text: "#333333".to_string(),
+                muted: "#444444".to_string(),
+                accent: "#555555".to_string(),
+                highlight: "#666666".to_string(),
+                success: "#777777".to_string(),
+                error: "#888888".to_string(),
+            },
+            created_at: "2026-03-27T11:00:00+01:00".to_string(),
+            updated_at: "2026-03-27T11:00:00+01:00".to_string(),
+        }];
+
+        assert!(has_duplicate_custom_name(&custom_themes, "aurora", None));
+        assert!(!has_duplicate_custom_name(
+            &custom_themes,
+            "aurora",
+            Some("theme-1")
+        ));
+    }
+
+    #[test]
+    fn custom_theme_round_trips_through_config_json() {
+        let config = Config {
+            theme: Some(ThemePreference::Dark),
+            active_theme: Some(ThemeSelection::custom("theme-aurora")),
+            custom_themes: vec![CustomTheme {
+                id: "theme-aurora".to_string(),
+                name: "Aurora".to_string(),
+                palette: ThemePalette {
+                    panel: "#111111".to_string(),
+                    border: "#222222".to_string(),
+                    text: "#333333".to_string(),
+                    muted: "#444444".to_string(),
+                    accent: "#555555".to_string(),
+                    highlight: "#666666".to_string(),
+                    success: "#777777".to_string(),
+                    error: "#888888".to_string(),
+                },
+                created_at: "2026-03-27T11:00:00+01:00".to_string(),
+                updated_at: "2026-03-27T11:00:00+01:00".to_string(),
+            }],
+            ..Config::default()
+        };
+
+        let json = serde_json::to_string(&config).unwrap();
+        let decoded: Config = serde_json::from_str(&json).unwrap();
+        let settings = theme_settings_from_config(&decoded);
+
+        assert_eq!(settings.custom_themes.len(), 1);
+        assert_eq!(
+            settings.active_theme,
+            ThemeSelection::custom("theme-aurora")
+        );
     }
 }

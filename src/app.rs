@@ -9,7 +9,11 @@ use crate::grouping::{GroupedEntry, GroupedProject, group_entries};
 use crate::models::{Client as TogglClientModel, Project, TimeEntry, Workspace};
 use crate::rollups::{DailyTotal, PeriodRollup, Rollups, WeekStart, build_rollups};
 use crate::rounding::{RoundingConfig, RoundingMode};
-use crate::storage::{self, CacheFile, CachedData, QuotaFile, RollupPreferences, ThemePreference};
+use crate::storage::{self, CacheFile, CachedData, QuotaFile, RollupPreferences};
+use crate::theme::{
+    CustomTheme, ThemeSelection, next_theme_selection, previous_theme_selection,
+    theme_selection_label,
+};
 use crate::toggl::{TogglClient, TogglError};
 use crate::update::{self, UpdateInfo};
 use arboard::Clipboard;
@@ -82,6 +86,7 @@ pub enum SettingsFocus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsItem {
     Theme,
+    ThemeStudio,
     TargetHours,
     VacationTargetHours,
     VacationCreditHours,
@@ -102,6 +107,11 @@ struct RefetchPlan {
     start: NaiveDate,
     end: NaiveDate,
     scope_label: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppCommand {
+    OpenThemeStudio,
 }
 
 pub struct App {
@@ -144,7 +154,7 @@ pub struct App {
     credit_sick_days_as_worked: bool,
     pub last_refresh: Option<DateTime<Local>>,
     pub show_help: bool,
-    pub theme: ThemePreference,
+    pub theme: ThemeSelection,
     pub target_hours: f64,
     pub update_info: Option<UpdateInfo>,
     pub update_installable: bool,
@@ -169,7 +179,8 @@ pub struct App {
     settings_edit_item: Option<SettingsItem>,
     settings_rounding_draft: RoundingConfig,
     settings_rounding_draft_enabled: bool,
-    settings_theme_draft: ThemePreference,
+    settings_theme_draft: ThemeSelection,
+    custom_themes: Vec<CustomTheme>,
     settings_credit_vacation_days_draft: bool,
     settings_credit_sick_days_draft: bool,
     settings_rollups_include_weekends_draft: bool,
@@ -178,6 +189,7 @@ pub struct App {
     status_created_at: Option<Instant>,
     last_status_snapshot: Option<String>,
     toast: Option<Toast>,
+    pending_command: Option<AppCommand>,
 }
 
 impl App {
@@ -192,7 +204,8 @@ impl App {
         } else {
             Mode::Login
         };
-        let theme = storage::read_theme().unwrap_or(ThemePreference::Terminal);
+        let theme_settings = storage::read_theme_settings();
+        let theme = theme_settings.active_theme.clone();
         let target_hours = storage::read_target_hours().unwrap_or(8.0);
         let rounding = storage::read_rounding();
         let rollup_preferences = storage::read_rollup_preferences();
@@ -265,7 +278,7 @@ impl App {
             credit_sick_days_as_worked,
             last_refresh: None,
             show_help: false,
-            theme,
+            theme: theme.clone(),
             target_hours,
             update_info: None,
             update_installable: false,
@@ -302,7 +315,8 @@ impl App {
             settings_edit_item: None,
             settings_rounding_draft: RoundingConfig::default(),
             settings_rounding_draft_enabled: false,
-            settings_theme_draft: theme,
+            settings_theme_draft: theme.clone(),
+            custom_themes: theme_settings.custom_themes,
             settings_credit_vacation_days_draft: credit_vacation_days_as_worked,
             settings_credit_sick_days_draft: credit_sick_days_as_worked,
             settings_rollups_include_weekends_draft: rollup_preferences.include_weekends,
@@ -311,6 +325,7 @@ impl App {
             status_created_at: None,
             last_status_snapshot: None,
             toast: None,
+            pending_command: None,
         }
     }
 
@@ -332,6 +347,17 @@ impl App {
 
     pub fn take_exit_message(&mut self) -> Option<String> {
         self.exit_message.take()
+    }
+
+    pub fn take_pending_command(&mut self) -> Option<AppCommand> {
+        self.pending_command.take()
+    }
+
+    pub fn reload_theme_state(&mut self) {
+        let theme_settings = storage::read_theme_settings();
+        self.theme = theme_settings.active_theme.clone();
+        self.custom_themes = theme_settings.custom_themes;
+        self.settings_theme_draft = self.theme.clone();
     }
 
     pub fn refetch_plan_view(&self) -> Option<RefetchPlanView> {
@@ -647,6 +673,7 @@ impl App {
                     self.show_help = false;
                 }
                 KeyCode::Char('q') => self.should_quit = true,
+                KeyCode::Char('g') | KeyCode::Char('G') => self.request_theme_studio(),
                 _ => {}
             }
             return;
@@ -682,6 +709,7 @@ impl App {
             KeyCode::Char(']') => self.shift_dashboard_date_range(1),
             KeyCode::Char('h') => self.show_help = true,
             KeyCode::Char('m') | KeyCode::Char('M') => self.toggle_theme(),
+            KeyCode::Char('g') | KeyCode::Char('G') => self.request_theme_studio(),
             KeyCode::Char('s') => self.enter_settings(),
             KeyCode::Char('o') | KeyCode::Char('O') => self.enter_rollups(),
             KeyCode::Char('d') => self.enter_date_input(DateInputMode::Range),
@@ -745,6 +773,7 @@ impl App {
                     self.show_help = false;
                 }
                 KeyCode::Char('q') => self.should_quit = true,
+                KeyCode::Char('g') | KeyCode::Char('G') => self.request_theme_studio(),
                 _ => {}
             }
             return;
@@ -773,6 +802,7 @@ impl App {
             KeyCode::Char('q') => self.should_quit = true,
             KeyCode::Esc => self.exit_rollups(),
             KeyCode::Char('h') => self.show_help = true,
+            KeyCode::Char('g') | KeyCode::Char('G') => self.request_theme_studio(),
             KeyCode::Char('w') | KeyCode::Char('W') => self.set_rollup_view(RollupView::Weekly),
             KeyCode::Char('m') | KeyCode::Char('M') => self.set_rollup_view(RollupView::Monthly),
             KeyCode::Char('y') | KeyCode::Char('Y') => self.set_rollup_view(RollupView::Yearly),
@@ -964,6 +994,11 @@ impl App {
         self.status = None;
     }
 
+    fn request_theme_studio(&mut self) {
+        self.pending_command = Some(AppCommand::OpenThemeStudio);
+        self.status = None;
+    }
+
     fn enter_rollups(&mut self) {
         self.rollup_focus = RollupFocus::Periods;
         self.rebuild_rollups();
@@ -1050,7 +1085,11 @@ impl App {
             KeyCode::Up => self.select_previous_setting_item(),
             KeyCode::Down => self.select_next_setting_item(),
             KeyCode::Enter => {
-                self.begin_edit_selected_setting_item();
+                if self.selected_setting_item() == Some(SettingsItem::ThemeStudio) {
+                    self.request_theme_studio();
+                } else {
+                    self.begin_edit_selected_setting_item();
+                }
             }
             _ => {}
         }
@@ -1303,6 +1342,7 @@ impl App {
             ],
             _ => vec![
                 SettingsItem::Theme,
+                SettingsItem::ThemeStudio,
                 SettingsItem::TargetHours,
                 SettingsItem::TimeRoundingToggle,
                 SettingsItem::RoundingIncrement,
@@ -1326,7 +1366,11 @@ impl App {
 
         match item {
             SettingsItem::Theme => {
-                self.settings_theme_draft = self.theme;
+                self.settings_theme_draft = self.theme.clone();
+            }
+            SettingsItem::ThemeStudio => {
+                self.request_theme_studio();
+                return;
             }
             SettingsItem::TargetHours => {
                 self.settings_input = format!("{:.2}", self.target_hours);
@@ -1381,17 +1425,24 @@ impl App {
     fn save_setting_item(&mut self, item: SettingsItem) {
         match item {
             SettingsItem::Theme => {
-                let next = self.settings_theme_draft;
-                if let Err(err) = storage::write_theme(next) {
-                    self.status = Some(format!("Theme save failed: {err}"));
-                    return;
-                }
-                self.theme = next;
-                let label = theme_label(next);
+                let next = self.settings_theme_draft.clone();
+                let settings = match storage::write_theme_selection(&next) {
+                    Ok(settings) => settings,
+                    Err(err) => {
+                        self.status = Some(format!("Theme save failed: {err}"));
+                        return;
+                    }
+                };
+                self.theme = settings.active_theme;
+                self.custom_themes = settings.custom_themes;
+                let label = theme_selection_label(&self.theme, &self.custom_themes);
                 self.status = Some(format!("Theme set to {label}."));
                 self.set_toast(format!("Theme set to {label}."), false);
                 self.settings_edit_item = None;
                 self.settings_focus = SettingsFocus::Items;
+            }
+            SettingsItem::ThemeStudio => {
+                self.request_theme_studio();
             }
             SettingsItem::RollupsIncludeWeekends | SettingsItem::RollupsWeekStart => {
                 let next = RollupPreferences {
@@ -1603,30 +1654,11 @@ impl App {
     }
 
     fn cycle_theme(&mut self, up: bool) {
-        let values = [
-            ThemePreference::Terminal,
-            ThemePreference::Dark,
-            ThemePreference::Light,
-        ];
-        let current = self.settings_theme_draft;
-        let index = values
-            .iter()
-            .position(|value| *value == current)
-            .unwrap_or(0);
-        let next_index = if up {
-            if index == 0 {
-                values.len() - 1
-            } else {
-                index - 1
-            }
+        self.settings_theme_draft = if up {
+            previous_theme_selection(&self.settings_theme_draft, &self.custom_themes)
         } else {
-            if index + 1 >= values.len() {
-                0
-            } else {
-                index + 1
-            }
+            next_theme_selection(&self.settings_theme_draft, &self.custom_themes)
         };
-        self.settings_theme_draft = values[next_index];
     }
 
     fn cycle_rollup_week_start(&mut self, up: bool) {
@@ -1759,6 +1791,12 @@ impl App {
         &self.settings_items
     }
 
+    pub fn selected_setting_item(&self) -> Option<SettingsItem> {
+        self.settings_item_state
+            .selected()
+            .and_then(|index| self.settings_items.get(index).copied())
+    }
+
     pub fn settings_item_state(&mut self) -> &mut ListState {
         &mut self.settings_item_state
     }
@@ -1798,14 +1836,18 @@ impl App {
         self.rounding
     }
 
-    pub fn settings_theme_display(&self) -> ThemePreference {
+    pub fn settings_theme_display(&self) -> ThemeSelection {
         if self.settings_focus == SettingsFocus::Edit
             && self.settings_edit_item == Some(SettingsItem::Theme)
         {
-            self.settings_theme_draft
+            self.settings_theme_draft.clone()
         } else {
-            self.theme
+            self.theme.clone()
         }
+    }
+
+    pub fn custom_themes(&self) -> &[CustomTheme] {
+        &self.custom_themes
     }
 
     pub fn settings_vacation_target_hours_display(&self) -> f64 {
@@ -2992,17 +3034,19 @@ impl App {
     }
 
     fn toggle_theme(&mut self) {
-        self.theme = match self.theme {
-            ThemePreference::Dark => ThemePreference::Light,
-            ThemePreference::Light | ThemePreference::Terminal => ThemePreference::Dark,
-        };
-        if let Err(err) = storage::write_theme(self.theme) {
-            self.status = Some(format!("Theme save failed: {err}"));
-            self.set_toast("Theme save failed.", true);
-        } else {
-            let label = theme_label(self.theme);
-            self.status = Some(format!("Theme set to {label}."));
-            self.set_toast(format!("{label} enabled."), false);
+        let next = next_theme_selection(&self.theme, &self.custom_themes);
+        match storage::write_theme_selection(&next) {
+            Ok(settings) => {
+                self.theme = settings.active_theme;
+                self.custom_themes = settings.custom_themes;
+                let label = theme_selection_label(&self.theme, &self.custom_themes);
+                self.status = Some(format!("Theme set to {label}."));
+                self.set_toast(format!("{label} enabled."), false);
+            }
+            Err(err) => {
+                self.status = Some(format!("Theme save failed: {err}"));
+                self.set_toast("Theme save failed.", true);
+            }
         }
     }
 
@@ -3565,14 +3609,6 @@ fn format_date_span(start: NaiveDate, end: NaiveDate) -> String {
         start.format("%Y-%m-%d").to_string()
     } else {
         format!("{}→{}", start.format("%Y-%m-%d"), end.format("%Y-%m-%d"))
-    }
-}
-
-fn theme_label(theme: ThemePreference) -> &'static str {
-    match theme {
-        ThemePreference::Terminal => "Terminal",
-        ThemePreference::Dark => "Midnight",
-        ThemePreference::Light => "Snow",
     }
 }
 

@@ -16,19 +16,30 @@ mod models;
 mod rollups;
 mod rounding;
 mod storage;
+mod theme;
+mod theme_studio;
 mod toggl;
 mod ui;
 mod update;
 
-use app::App;
+use app::{App, AppCommand};
 use dates::DateRange;
+use theme_studio::ThemeStudioExit;
 
 fn main() -> Result<(), Box<dyn Error>> {
-    if let Some(arg1) = std::env::args().nth(1) {
-        if arg1 == "--version" || arg1 == "-V" {
-            println!("timeshit {}", env!("CARGO_PKG_VERSION"));
-            return Ok(());
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    if args.iter().any(|arg| arg == "--version" || arg == "-V") {
+        println!("timeshit {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+    if args.iter().any(|arg| arg == "--theme-studio") {
+        match theme_studio::run()? {
+            ThemeStudioExit::Closed => {}
+            ThemeStudioExit::TimedOut => {
+                println!("Theme studio timed out after 15 minutes of inactivity.");
+            }
         }
+        return Ok(());
     }
 
     let date_range = DateRange::today();
@@ -66,6 +77,25 @@ fn main() -> Result<(), Box<dyn Error>> {
                 app.handle_key_event(key);
             }
         }
+
+        if let Some(command) = app.take_pending_command() {
+            match command {
+                AppCommand::OpenThemeStudio => {
+                    match run_theme_studio_session(&mut terminal, &mut app) {
+                        Ok(ThemeStudioExit::Closed) => {}
+                        Ok(ThemeStudioExit::TimedOut) => {
+                            app.status = Some(
+                                "Theme studio timed out after 15 minutes of inactivity."
+                                    .to_string(),
+                            );
+                        }
+                        Err(err) => {
+                            app.status = Some(format!("Theme studio failed: {err}"));
+                        }
+                    }
+                }
+            }
+        }
     }
 
     disable_raw_mode()?;
@@ -77,4 +107,23 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     Ok(())
+}
+
+fn run_theme_studio_session(
+    terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
+    app: &mut App,
+) -> Result<ThemeStudioExit, Box<dyn Error>> {
+    disable_raw_mode()?;
+    terminal.backend_mut().execute(LeaveAlternateScreen)?;
+    terminal.show_cursor()?;
+
+    let studio_result = theme_studio::run();
+
+    enable_raw_mode()?;
+    terminal.backend_mut().execute(EnterAlternateScreen)?;
+    terminal.clear()?;
+    terminal.hide_cursor()?;
+
+    app.reload_theme_state();
+    studio_result.map_err(|err| err.into())
 }

@@ -20,6 +20,8 @@ Settings are organized into categories (left column) and items (right column).
 - Toggle/preset fields: `Up/Down` change, `Enter` save, `Esc` cancel
 
 ## General
+- **Theme**  
+  Built-in presets include `Terminal`, `Midnight`, `Snow`, `Tokyo Night`, `Dracula`, `Catppuccin`, and `Cyberpunk`.
 - **Target hours**  
   Used to color the footer total (green if met, red if below).
 - **Time rounding** (Off/On)  
