@@ -35,7 +35,7 @@ You can authenticate in three ways:
 timeshit
 ```
 
-On launch, Timeshit checks GitHub Releases for updates. If a newer version is found, the app shows an alert; press `u` to install. If the update check fails (offline/GitHub down), the app shows a warning and continues. After a successful update, the app exits and should be relaunched.
+On launch, Timeshit compares the installed version against the latest GitHub Release. If a newer version is found, the app shows the update dialog on startup. Press `u` to install when self-update is available, or follow the dialog guidance for package-manager/manual installs. If the update check fails (offline/GitHub down), the app shows a warning and continues. After a successful update, the app exits and should be relaunched.
 
 Date ranges are selected inside the TUI (`d`).
 

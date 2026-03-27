@@ -689,6 +689,8 @@ fn draw_update_popup(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
 
     let action = if app.update_installable {
         "Press u to install now."
+    } else if update::can_self_update() {
+        "Download the latest release from GitHub to update."
     } else {
         "Update via your package manager."
     };
@@ -713,7 +715,11 @@ fn draw_update_popup(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
         )),
         Line::from(""),
         Line::from(action),
-        Line::from("Enter or Esc dismiss"),
+        Line::from(if app.update_installable {
+            "Enter or Esc dismiss"
+        } else {
+            "Press u for guidance, or Enter/Esc dismiss"
+        }),
     ];
 
     let paragraph = Paragraph::new(lines)
