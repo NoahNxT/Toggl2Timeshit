@@ -685,15 +685,18 @@ fn draw_update_popup(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
     frame.render_widget(Clear, block);
 
     let action = if app.update_installable {
-        "Press u to install now."
-    } else if update::can_self_update() {
-        "Download the latest release from GitHub to update."
+        if app.update_release_page_opened {
+            "Press u to install now. The latest release page was opened in your browser."
+        } else {
+            "Press u to install now."
+        }
+    } else if app.update_release_page_opened {
+        "The latest release page was opened in your browser."
     } else {
-        "Update via your package manager."
+        "Please update to the latest version."
     };
-    let changelog_link = terminal_hyperlink("Open changelog", &info.changelog_url);
 
-    let lines = vec![
+    let mut lines = vec![
         Line::from(Span::styled(
             "A new version is available",
             Style::default().add_modifier(Modifier::BOLD),
@@ -701,23 +704,23 @@ fn draw_update_popup(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
         Line::from(""),
         Line::from(format!("Current: v{}", update::current_version())),
         Line::from(format!("Latest:  v{}", info.latest)),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled("Changelog: ", theme.muted_style()),
-            Span::raw(changelog_link),
-        ]),
-        Line::from(Span::styled(
-            info.changelog_url.clone(),
-            theme.muted_style(),
-        )),
-        Line::from(""),
-        Line::from(action),
-        Line::from(if app.update_installable {
-            "Enter or Esc dismiss"
-        } else {
-            "Press u for guidance, or Enter/Esc dismiss"
-        }),
     ];
+
+    if !info.release_notes.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "What's Changed",
+            Style::default().add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(""));
+        for note in info.release_notes.iter().take(8) {
+            lines.push(Line::from(note.clone()));
+        }
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(action));
+    lines.push(Line::from("Enter or Esc dismiss"));
 
     let paragraph = Paragraph::new(lines)
         .alignment(Alignment::Left)
@@ -905,10 +908,6 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
         ])
         .split(popup_layout[1]);
     vertical[1]
-}
-
-fn terminal_hyperlink(label: &str, url: &str) -> String {
-    format!("\u{1b}]8;;{url}\u{1b}\\{label}\u{1b}]8;;\u{1b}\\")
 }
 
 fn draw_toast(frame: &mut Frame, area: Rect, message: &str, is_error: bool, theme: &Theme) {

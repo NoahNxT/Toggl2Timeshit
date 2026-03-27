@@ -150,6 +150,7 @@ pub struct App {
     pub update_info: Option<UpdateInfo>,
     pub update_error: Option<String>,
     pub update_installable: bool,
+    pub update_release_page_opened: bool,
     show_update_popup: bool,
     pub rounding: Option<RoundingConfig>,
     token_hash: Option<String>,
@@ -274,6 +275,7 @@ impl App {
             update_info: None,
             update_error: None,
             update_installable: false,
+            update_release_page_opened: false,
             show_update_popup: false,
             rounding,
             token_hash,
@@ -372,20 +374,17 @@ impl App {
 
         match update::check_for_update() {
             Ok(Some(info)) => {
-                let can_self_update = update::can_self_update();
-                self.update_installable = can_self_update && info.has_download();
+                let is_direct_install = update::is_direct_install();
+                self.update_installable = is_direct_install && info.has_download();
+                self.update_release_page_opened = if is_direct_install {
+                    update::open_release_page(&info.changelog_url).is_ok()
+                } else {
+                    false
+                };
                 let message = if self.update_installable {
                     format!("Update available: v{} (press u to update)", info.latest)
-                } else if can_self_update {
-                    format!(
-                        "Update available: v{} (download the latest GitHub release)",
-                        info.latest
-                    )
                 } else {
-                    format!(
-                        "Update available: v{} (update via package manager)",
-                        info.latest
-                    )
+                    format!("Update available: v{} (please update)", info.latest)
                 };
                 self.update_info = Some(info);
                 self.show_update_popup = true;
@@ -395,9 +394,11 @@ impl App {
             Ok(None) => {
                 self.update_info = None;
                 self.update_installable = false;
+                self.update_release_page_opened = false;
                 self.show_update_popup = false;
             }
             Err(err) => {
+                self.update_release_page_opened = false;
                 self.show_update_popup = false;
                 let message = format!("Update check failed: {err}");
                 self.status = Some(message.clone());
@@ -722,11 +723,24 @@ impl App {
     }
 
     fn notify_update_install_unavailable(&mut self) {
-        if update::can_self_update() {
-            self.set_toast("Download the latest release from GitHub.", false);
-        } else {
-            self.set_toast("Update via package manager.", false);
+        if self.update_release_page_opened {
+            self.set_toast("The latest GitHub release is open in your browser.", false);
+            return;
         }
+
+        if update::is_direct_install()
+            && let Some(url) = self
+                .update_info
+                .as_ref()
+                .map(|info| info.changelog_url.clone())
+            && update::open_release_page(&url).is_ok()
+        {
+            self.update_release_page_opened = true;
+            self.set_toast("Opened the latest GitHub release in your browser.", false);
+            return;
+        }
+
+        self.set_toast("Please update to the latest version.", false);
     }
 
     fn handle_dashboard_input(&mut self, key: KeyEvent) {
@@ -789,7 +803,7 @@ impl App {
                 } else if update::should_check_updates() {
                     self.set_toast("No update available.", false);
                 } else {
-                    self.set_toast("Updates are managed by your package manager.", false);
+                    self.set_toast("No update available.", false);
                 }
             }
             KeyCode::Char('c') | KeyCode::Char('C') => self.copy_client_entries_to_clipboard(),

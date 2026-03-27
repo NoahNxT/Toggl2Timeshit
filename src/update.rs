@@ -11,6 +11,7 @@ mod enabled {
     use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
     use std::path::PathBuf;
+    use std::process::{Command, Stdio};
     use std::time::Duration;
     use tar::Archive;
     use tempfile::Builder;
@@ -35,6 +36,7 @@ mod enabled {
         pub asset_name: Option<String>,
         pub url: Option<String>,
         pub changelog_url: String,
+        pub release_notes: Vec<String>,
     }
 
     impl UpdateInfo {
@@ -68,6 +70,8 @@ mod enabled {
     struct Release {
         tag_name: String,
         html_url: String,
+        #[serde(default)]
+        body: String,
         assets: Vec<ReleaseAsset>,
     }
 
@@ -101,7 +105,7 @@ mod enabled {
         true
     }
 
-    pub fn can_self_update() -> bool {
+    pub fn is_direct_install() -> bool {
         if matches!(forced_update_mode(), Some(ForcedUpdateMode::PackageManager)) {
             return false;
         }
@@ -221,6 +225,35 @@ mod enabled {
         }
     }
 
+    pub fn open_release_page(url: &str) -> Result<(), UpdateError> {
+        let mut command = match env::consts::OS {
+            "macos" => {
+                let mut command = Command::new("open");
+                command.arg(url);
+                command
+            }
+            "windows" => {
+                let mut command = Command::new("cmd");
+                command.args(["/C", "start", "", url]);
+                command
+            }
+            _ => {
+                let mut command = Command::new("xdg-open");
+                command.arg(url);
+                command
+            }
+        };
+
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|err| UpdateError::Io(err.to_string()))?;
+
+        Ok(())
+    }
+
     fn build_client() -> Result<Client, UpdateError> {
         Client::builder()
             .user_agent("timeshit-tui")
@@ -243,12 +276,14 @@ mod enabled {
             ForcedUpdateMode::Installable => mock_download_asset(),
             ForcedUpdateMode::Manual | ForcedUpdateMode::PackageManager => (None, None),
         };
+        let release_notes = forced_release_notes(mode, &latest);
 
         Ok(Some(UpdateInfo {
             latest,
             asset_name,
             url,
             changelog_url,
+            release_notes,
         }))
     }
 
@@ -292,6 +327,25 @@ mod enabled {
         )
     }
 
+    fn forced_release_notes(mode: ForcedUpdateMode, latest: &Version) -> Vec<String> {
+        let mut notes = vec![format!("Previewing update dialog content for v{latest}.")];
+        if matches!(mode, ForcedUpdateMode::Installable) {
+            notes.push(
+                "This preview simulates a direct GitHub install with in-app update support."
+                    .to_string(),
+            );
+        } else {
+            notes.push(
+                "This preview simulates an install that cannot self-update in the TUI.".to_string(),
+            );
+        }
+        notes.push(
+            "Open the release page in your browser for the full GitHub changelog layout."
+                .to_string(),
+        );
+        notes
+    }
+
     fn resolve_update_info(
         release: Release,
         current: &Version,
@@ -309,7 +363,45 @@ mod enabled {
             asset_name: asset.as_ref().map(|value| value.name.clone()),
             url: asset.map(|value| value.browser_download_url),
             changelog_url: release.html_url,
+            release_notes: release_notes_from_markdown(&release.body),
         }))
+    }
+
+    fn release_notes_from_markdown(markdown: &str) -> Vec<String> {
+        let mut lines: Vec<String> = Vec::new();
+
+        for raw_line in markdown.lines() {
+            let trimmed = raw_line.trim();
+            if trimmed.is_empty() {
+                if !matches!(lines.last(), Some(last) if last.is_empty()) {
+                    lines.push(String::new());
+                }
+                continue;
+            }
+
+            let mut line = trimmed
+                .trim_start_matches('#')
+                .trim()
+                .replace("**", "")
+                .replace("__", "")
+                .replace('`', "");
+
+            if line.eq_ignore_ascii_case("What's Changed") {
+                continue;
+            }
+
+            if let Some(stripped) = line.strip_prefix("* ").or_else(|| line.strip_prefix("- ")) {
+                line = format!("• {}", stripped.trim());
+            }
+
+            lines.push(line);
+        }
+
+        while matches!(lines.last(), Some(last) if last.is_empty()) {
+            lines.pop();
+        }
+
+        lines
     }
 
     fn find_matching_release_asset(assets: &[ReleaseAsset]) -> Option<ReleaseAsset> {
@@ -428,6 +520,7 @@ mod enabled {
             let release = Release {
                 tag_name: "v1.2.0".to_string(),
                 html_url: "https://example.com/releases/v1.2.0".to_string(),
+                body: String::new(),
                 assets: vec![],
             };
 
@@ -444,6 +537,7 @@ mod enabled {
             let release = Release {
                 tag_name: "v1.2.0".to_string(),
                 html_url: "https://example.com/releases/v1.2.0".to_string(),
+                body: String::new(),
                 assets: vec![],
             };
 
@@ -461,6 +555,7 @@ mod enabled {
             let release = Release {
                 tag_name: "v1.2.0".to_string(),
                 html_url: "https://example.com/releases/v1.2.0".to_string(),
+                body: String::new(),
                 assets: vec![ReleaseAsset {
                     name: candidate,
                     browser_download_url: "https://example.com/download".to_string(),
@@ -472,6 +567,22 @@ mod enabled {
                 .expect("expected update info");
 
             assert!(info.has_download());
+        }
+
+        #[test]
+        fn release_notes_strip_github_markdown() {
+            let notes = release_notes_from_markdown(
+                "## What's Changed\n* Fix updater popup\n\n**Full Changelog**: https://example.com",
+            );
+
+            assert_eq!(
+                notes,
+                vec![
+                    "• Fix updater popup".to_string(),
+                    String::new(),
+                    "Full Changelog: https://example.com".to_string()
+                ]
+            );
         }
     }
 }
@@ -501,6 +612,7 @@ mod disabled {
         pub asset_name: Option<String>,
         pub url: Option<String>,
         pub changelog_url: String,
+        pub release_notes: Vec<String>,
     }
 
     impl UpdateInfo {
@@ -532,7 +644,7 @@ mod disabled {
         env::var(FORCE_UPDATE_DIALOG_ENV).is_ok()
     }
 
-    pub fn can_self_update() -> bool {
+    pub fn is_direct_install() -> bool {
         !matches!(
             env::var(FORCE_UPDATE_DIALOG_ENV)
                 .ok()
@@ -567,6 +679,11 @@ mod disabled {
             asset_name: (!manual_mode).then(|| "timeshit-update.tar.gz".to_string()),
             url: (!manual_mode).then(|| "https://example.invalid/timeshit-update".to_string()),
             changelog_url,
+            release_notes: vec![
+                "Previewing forced update dialog content.".to_string(),
+                "Open the release page in your browser for the full GitHub changelog layout."
+                    .to_string(),
+            ],
         }))
     }
 
@@ -583,6 +700,12 @@ mod disabled {
     }
 
     pub fn cleanup_staged(_path: &Path) {}
+
+    pub fn open_release_page(_url: &str) -> Result<(), UpdateError> {
+        Err(UpdateError::Unsupported(
+            "Opening the release page is disabled in this build".to_string(),
+        ))
+    }
 }
 
 #[cfg(feature = "update")]
