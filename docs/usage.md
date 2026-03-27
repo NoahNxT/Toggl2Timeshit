@@ -39,6 +39,8 @@
 Rollups data coverage:
 - Period rows show `!Nd n/f` when `N` included days are not fetched.
 - Calendar shows `n/f` and `?` markers for days not fetched yet.
+- The rollup summary shows a single signed `Overtime` balance for the selected period.
+- Sick/vacation days can use full-day targets while crediting fewer worked hours.
 
 ## Clipboard
 - `c`: Copy **all entries for the selected client**

@@ -5,7 +5,10 @@ This file is auto-updated by the release workflow.
 
 ## Unreleased
 
-- Work in progress.
+- 🐛 fix: treat legacy sick/vacation day hours as worked credit while keeping full-day targets
+- 🐛 fix: calculate rollup overtime across the full selected period
+- ✨ feat: split special-day target hours from worked-credit hours in settings
+- 📝 docs: document signed overtime balances and special-day target/credit settings
 ## v1.9.1 - 2026-03-26
 
 - build(deps): bump tar from 0.4.44 to 0.4.45
