@@ -34,7 +34,6 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             app.status.as_deref().unwrap_or("Unknown error"),
             &theme,
         ),
-        Mode::Updating => draw_overlay(frame, size, "Installing update...", &theme),
         Mode::Login => draw_login(frame, app, size, &theme),
         Mode::WorkspaceSelect => draw_workspace_select(frame, app, size, &theme),
         Mode::DateInput(mode) => draw_date_input(frame, app, size, mode, &theme),
@@ -685,45 +684,111 @@ fn draw_update_popup(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
     frame.render_widget(Clear, block);
 
     let action = if app.update_installable {
-        "Press u to install now."
-    } else if update::can_self_update() {
-        "Download the latest release from GitHub to update."
+        "Press u to open the latest GitHub release."
     } else {
-        "Update via your package manager."
+        "Please update to the latest version."
     };
-    let changelog_link = terminal_hyperlink("Open changelog", &info.changelog_url);
 
-    let lines = vec![
+    let mut lines = vec![
         Line::from(Span::styled(
             "A new version is available",
             Style::default().add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
-        Line::from(format!("Current: v{}", update::current_version())),
-        Line::from(format!("Latest:  v{}", info.latest)),
-        Line::from(""),
         Line::from(vec![
-            Span::styled("Changelog: ", theme.muted_style()),
-            Span::raw(changelog_link),
+            Span::styled("Current: ", theme.muted_style()),
+            Span::styled(
+                format!("v{}", update::current_version()),
+                Style::default().fg(theme.highlight),
+            ),
         ]),
-        Line::from(Span::styled(
-            info.changelog_url.clone(),
-            theme.muted_style(),
-        )),
-        Line::from(""),
-        Line::from(action),
-        Line::from(if app.update_installable {
-            "Enter or Esc dismiss"
-        } else {
-            "Press u for guidance, or Enter/Esc dismiss"
-        }),
+        Line::from(vec![
+            Span::styled("Latest:  ", theme.muted_style()),
+            Span::styled(
+                format!("v{}", info.latest),
+                Style::default()
+                    .fg(theme.success)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]),
     ];
+
+    if !info.release_notes.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "What's Changed",
+            theme.title_style(),
+        )));
+        lines.push(Line::from(""));
+        for note in info.release_notes.iter().take(8) {
+            lines.push(update_note_line(note, theme));
+        }
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        action,
+        Style::default()
+            .fg(theme.highlight)
+            .add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(Span::styled(
+        "Enter/Esc dismiss",
+        theme.muted_style(),
+    )));
 
     let paragraph = Paragraph::new(lines)
         .alignment(Alignment::Left)
         .block(panel_block("Update Available", theme))
         .wrap(Wrap { trim: true });
     frame.render_widget(paragraph, block);
+}
+
+fn update_note_line(note: &str, theme: &Theme) -> Line<'static> {
+    if note.is_empty() {
+        return Line::from("");
+    }
+
+    if let Some(rest) = note.strip_prefix("• ") {
+        return Line::from(vec![
+            Span::styled(
+                "• ",
+                Style::default()
+                    .fg(theme.highlight)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(rest.to_string()),
+        ]);
+    }
+
+    if let Some(rest) = note.strip_prefix("Full Changelog: ") {
+        return Line::from(vec![
+            Span::styled("Full Changelog: ", theme.muted_style()),
+            Span::styled(
+                rest.to_string(),
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::UNDERLINED),
+            ),
+        ]);
+    }
+
+    if let Some(first) = note.chars().next()
+        && !first.is_ascii()
+    {
+        let idx = first.len_utf8();
+        return Line::from(vec![
+            Span::styled(
+                first.to_string(),
+                Style::default()
+                    .fg(theme.highlight)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(note[idx..].to_string()),
+        ]);
+    }
+
+    Line::from(note.to_string())
 }
 
 fn draw_login(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
@@ -905,10 +970,6 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
         ])
         .split(popup_layout[1]);
     vertical[1]
-}
-
-fn terminal_hyperlink(label: &str, url: &str) -> String {
-    format!("\u{1b}]8;;{url}\u{1b}\\{label}\u{1b}]8;;\u{1b}\\")
 }
 
 fn draw_toast(frame: &mut Frame, area: Rect, message: &str, is_error: bool, theme: &Theme) {
@@ -1784,7 +1845,7 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
             rows.len() - 3,
             Row::new(vec![
                 Cell::from(Span::styled("u", key_style)),
-                Cell::from("Install update (when available)"),
+                Cell::from("Open latest release"),
             ]),
         );
     }
