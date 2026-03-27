@@ -52,11 +52,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         terminal.draw(|frame| ui::draw(frame, &mut app))?;
 
-        if app.needs_update_install() {
-            app.perform_update();
-        }
-
-        if app.needs_refresh && !app.is_update_blocking() {
+        if app.needs_refresh {
             app.refresh_data();
         }
 

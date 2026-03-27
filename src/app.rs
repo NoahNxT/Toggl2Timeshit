@@ -27,7 +27,6 @@ pub enum Mode {
     DateInput(DateInputMode),
     Settings,
     Error,
-    Updating,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -148,7 +147,6 @@ pub struct App {
     pub theme: ThemePreference,
     pub target_hours: f64,
     pub update_info: Option<UpdateInfo>,
-    pub update_error: Option<String>,
     pub update_installable: bool,
     show_update_popup: bool,
     pub rounding: Option<RoundingConfig>,
@@ -157,9 +155,7 @@ pub struct App {
     quota: QuotaFile,
     refresh_intent: RefreshIntent,
     refresh_resume_mode: Option<Mode>,
-    update_resume_mode: Option<Mode>,
     needs_update_check: bool,
-    needs_update_install: bool,
     exit_message: Option<String>,
     date_start_input: String,
     date_end_input: String,
@@ -272,7 +268,6 @@ impl App {
             theme,
             target_hours,
             update_info: None,
-            update_error: None,
             update_installable: false,
             show_update_popup: false,
             rounding,
@@ -281,9 +276,7 @@ impl App {
             quota,
             refresh_intent: RefreshIntent::CacheOnly,
             refresh_resume_mode: None,
-            update_resume_mode: None,
             needs_update_check,
-            needs_update_install: false,
             exit_message: None,
             date_start_input: String::new(),
             date_end_input: String::new(),
@@ -328,7 +321,6 @@ impl App {
             Mode::DateInput(mode) => self.handle_date_input(mode, key),
             Mode::Settings => self.handle_settings_input(key),
             Mode::RefetchConfirm => self.handle_refetch_confirm_input(key),
-            Mode::Updating => {}
             Mode::Rollups => self.handle_rollups_input(key),
             Mode::Dashboard | Mode::Loading | Mode::Error => self.handle_dashboard_input(key),
         }
@@ -336,14 +328,6 @@ impl App {
 
     pub fn needs_update_check(&self) -> bool {
         self.needs_update_check
-    }
-
-    pub fn needs_update_install(&self) -> bool {
-        self.needs_update_install
-    }
-
-    pub fn is_update_blocking(&self) -> bool {
-        matches!(self.mode, Mode::Updating)
     }
 
     pub fn take_exit_message(&mut self) -> Option<String> {
@@ -368,14 +352,16 @@ impl App {
             return;
         }
         self.needs_update_check = false;
-        self.update_error = None;
 
         match update::check_for_update() {
             Ok(Some(info)) => {
                 let is_direct_install = update::is_direct_install();
-                self.update_installable = is_direct_install && info.has_download();
+                self.update_installable = is_direct_install;
                 let message = if self.update_installable {
-                    format!("Update available: v{} (press u to update)", info.latest)
+                    format!(
+                        "Update available: v{} (press u to open the latest release)",
+                        info.latest
+                    )
                 } else {
                     format!("Update available: v{} (please update)", info.latest)
                 };
@@ -394,52 +380,6 @@ impl App {
                 let message = format!("Update check failed: {err}");
                 self.status = Some(message.clone());
                 self.set_toast(message, true);
-            }
-        }
-    }
-
-    pub fn perform_update(&mut self) {
-        if !self.needs_update_install {
-            return;
-        }
-        self.needs_update_install = false;
-
-        let info = match self.update_info.clone() {
-            Some(info) => info,
-            None => {
-                self.handle_update_failure("Update info missing.".to_string());
-                return;
-            }
-        };
-
-        let current_exe = match std::env::current_exe() {
-            Ok(path) => path,
-            Err(err) => {
-                self.handle_update_failure(format!("Failed to locate current binary: {err}"));
-                return;
-            }
-        };
-
-        let staged_path = match update::download_and_extract(&info) {
-            Ok(path) => path,
-            Err(err) => {
-                self.handle_update_failure(err.to_string());
-                return;
-            }
-        };
-
-        let install_result = update::install_update(&staged_path, &current_exe);
-        if !cfg!(windows) {
-            update::cleanup_staged(&staged_path);
-        }
-
-        match install_result {
-            Ok(()) => {
-                self.exit_message = Some(format!("Updated to v{}. Please relaunch.", info.latest));
-                self.should_quit = true;
-            }
-            Err(err) => {
-                self.handle_update_failure(err.to_string());
             }
         }
     }
@@ -681,36 +621,9 @@ impl App {
         }
     }
 
-    fn start_update(&mut self) {
-        if self.update_resume_mode.is_none() {
-            self.update_resume_mode = Some(self.mode);
-        }
+    fn trigger_update_action(&mut self) {
         self.show_update_popup = false;
-        self.mode = Mode::Updating;
-        self.needs_update_install = true;
-        self.update_error = None;
-    }
-
-    fn resume_from_update(&mut self) {
-        if let Some(mode) = self.update_resume_mode.take() {
-            self.mode = mode;
-            return;
-        }
-
-        if self.token.is_some() {
-            self.mode = Mode::Loading;
-            self.needs_refresh = true;
-        } else {
-            self.mode = Mode::Login;
-        }
-    }
-
-    fn handle_update_failure(&mut self, message: String) {
-        self.update_error = Some(message.clone());
-        let status = format!("Update failed: {message}");
-        self.status = Some(status.clone());
-        self.set_toast("Update failed; continuing without update.", true);
-        self.resume_from_update();
+        self.notify_update_install_unavailable();
     }
 
     fn notify_update_install_unavailable(&mut self) {
@@ -749,7 +662,7 @@ impl App {
                 KeyCode::Char('u') | KeyCode::Char('U') => {
                     self.show_update_popup = false;
                     if self.update_info.is_some() && self.update_installable {
-                        self.start_update();
+                        self.trigger_update_action();
                     } else if self.update_info.is_some() {
                         self.notify_update_install_unavailable();
                     }
@@ -782,7 +695,7 @@ impl App {
             KeyCode::Char('u') | KeyCode::Char('U') => {
                 self.show_update_popup = false;
                 if self.update_info.is_some() && self.update_installable {
-                    self.start_update();
+                    self.trigger_update_action();
                 } else if self.update_info.is_some() {
                     self.notify_update_install_unavailable();
                 } else if update::should_check_updates() {
@@ -847,7 +760,7 @@ impl App {
                 KeyCode::Char('u') | KeyCode::Char('U') => {
                     self.show_update_popup = false;
                     if self.update_info.is_some() && self.update_installable {
-                        self.start_update();
+                        self.trigger_update_action();
                     } else if self.update_info.is_some() {
                         self.notify_update_install_unavailable();
                     }

@@ -34,7 +34,6 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             app.status.as_deref().unwrap_or("Unknown error"),
             &theme,
         ),
-        Mode::Updating => draw_overlay(frame, size, "Installing update...", &theme),
         Mode::Login => draw_login(frame, app, size, &theme),
         Mode::WorkspaceSelect => draw_workspace_select(frame, app, size, &theme),
         Mode::DateInput(mode) => draw_date_input(frame, app, size, mode, &theme),
@@ -685,8 +684,6 @@ fn draw_update_popup(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
     frame.render_widget(Clear, block);
 
     let action = if app.update_installable {
-        "Press u to install now."
-    } else if update::is_direct_install() {
         "Press u to open the latest GitHub release."
     } else {
         "Please update to the latest version."
@@ -716,13 +713,11 @@ fn draw_update_popup(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
 
     lines.push(Line::from(""));
     lines.push(Line::from(action));
-    lines.push(Line::from(
-        if app.update_installable || update::is_direct_install() {
-            "Press u, or Enter/Esc dismiss"
-        } else {
-            "Enter or Esc dismiss"
-        },
-    ));
+    lines.push(Line::from(if app.update_installable {
+        "Press u, or Enter/Esc dismiss"
+    } else {
+        "Enter or Esc dismiss"
+    }));
 
     let paragraph = Paragraph::new(lines)
         .alignment(Alignment::Left)
@@ -1785,7 +1780,7 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
             rows.len() - 3,
             Row::new(vec![
                 Cell::from(Span::styled("u", key_style)),
-                Cell::from("Install update (when available)"),
+                Cell::from("Open latest release"),
             ]),
         );
     }

@@ -1,21 +1,13 @@
 #[cfg(feature = "update")]
 mod enabled {
-    use flate2::read::GzDecoder;
     use reqwest::blocking::Client;
     use semver::Version;
     use serde::Deserialize;
     use std::env;
-    use std::fs::{self, File};
-    use std::io;
-    #[cfg(unix)]
-    use std::os::unix::fs::PermissionsExt;
+    use std::fs;
     use std::path::Path;
-    use std::path::PathBuf;
     use std::process::{Command, Stdio};
     use std::time::Duration;
-    use tar::Archive;
-    use tempfile::Builder;
-    use zip::ZipArchive;
 
     const RELEASES_URL: &str =
         "https://api.github.com/repos/NoahNxT/Toggl2Timeshit/releases/latest";
@@ -33,16 +25,8 @@ mod enabled {
     #[derive(Debug, Clone)]
     pub struct UpdateInfo {
         pub latest: Version,
-        pub asset_name: Option<String>,
-        pub url: Option<String>,
         pub changelog_url: String,
         pub release_notes: Vec<String>,
-    }
-
-    impl UpdateInfo {
-        pub fn has_download(&self) -> bool {
-            self.asset_name.is_some() && self.url.is_some()
-        }
     }
 
     #[derive(Debug)]
@@ -50,7 +34,6 @@ mod enabled {
         Network(String),
         Parse(String),
         Io(String),
-        Unsupported(String),
     }
 
     impl std::fmt::Display for UpdateError {
@@ -59,7 +42,6 @@ mod enabled {
                 UpdateError::Network(message) => write!(f, "Network error: {message}"),
                 UpdateError::Parse(message) => write!(f, "Parse error: {message}"),
                 UpdateError::Io(message) => write!(f, "IO error: {message}"),
-                UpdateError::Unsupported(message) => write!(f, "Unsupported: {message}"),
             }
         }
     }
@@ -72,13 +54,6 @@ mod enabled {
         html_url: String,
         #[serde(default)]
         body: String,
-        assets: Vec<ReleaseAsset>,
-    }
-
-    #[derive(Clone, Deserialize)]
-    struct ReleaseAsset {
-        name: String,
-        browser_download_url: String,
     }
 
     pub fn current_version() -> Version {
@@ -87,7 +62,7 @@ mod enabled {
     }
 
     pub fn should_check_updates() -> bool {
-        if forced_update_mode().is_some() {
+        if is_forced_update_dialog() {
             return true;
         }
 
@@ -103,6 +78,10 @@ mod enabled {
         }
 
         true
+    }
+
+    pub fn is_forced_update_dialog() -> bool {
+        forced_update_mode().is_some()
     }
 
     pub fn is_direct_install() -> bool {
@@ -136,93 +115,6 @@ mod enabled {
             .map_err(|err| UpdateError::Parse(err.to_string()))?;
 
         resolve_update_info(release, &current_version())
-    }
-
-    pub fn download_and_extract(info: &UpdateInfo) -> Result<PathBuf, UpdateError> {
-        let asset_name = info.asset_name.as_deref().ok_or_else(|| {
-            UpdateError::Unsupported(
-                "No downloadable update asset found for this release".to_string(),
-            )
-        })?;
-        let url = info.url.as_deref().ok_or_else(|| {
-            UpdateError::Unsupported(
-                "No downloadable update asset found for this release".to_string(),
-            )
-        })?;
-        let client = build_client()?;
-        let response = client
-            .get(url)
-            .send()
-            .map_err(|err| UpdateError::Network(err.to_string()))?;
-
-        if !response.status().is_success() {
-            return Err(UpdateError::Network(format!(
-                "Download failed: {}",
-                response.status()
-            )));
-        }
-
-        let tempdir = Builder::new()
-            .prefix("timeshit-update-")
-            .tempdir()
-            .map_err(|err| UpdateError::Io(err.to_string()))?;
-
-        let archive_path = tempdir.path().join(asset_name);
-        let mut archive_file =
-            File::create(&archive_path).map_err(|err| UpdateError::Io(err.to_string()))?;
-        let mut reader = response;
-        io::copy(&mut reader, &mut archive_file).map_err(|err| UpdateError::Io(err.to_string()))?;
-
-        let archive_file =
-            File::open(&archive_path).map_err(|err| UpdateError::Io(err.to_string()))?;
-        if asset_name.ends_with(".zip") {
-            let mut archive =
-                ZipArchive::new(archive_file).map_err(|err| UpdateError::Io(err.to_string()))?;
-            archive
-                .extract(tempdir.path())
-                .map_err(|err| UpdateError::Io(err.to_string()))?;
-        } else {
-            let decoder = GzDecoder::new(archive_file);
-            let mut archive = Archive::new(decoder);
-            archive
-                .unpack(tempdir.path())
-                .map_err(|err| UpdateError::Io(err.to_string()))?;
-        }
-
-        let binary_candidates = expected_binary_candidates()?;
-        let extracted_path = find_extracted_binary(tempdir.path(), &binary_candidates)?;
-        let _persisted_dir = tempdir.keep();
-
-        Ok(extracted_path)
-    }
-
-    pub fn install_update(staged_path: &Path, current_exe: &Path) -> Result<(), UpdateError> {
-        #[cfg(windows)]
-        {
-            install_update_windows(staged_path, current_exe)?;
-            return Ok(());
-        }
-
-        #[cfg(unix)]
-        {
-            install_update_unix(staged_path, current_exe)?;
-            return Ok(());
-        }
-
-        #[allow(unreachable_code)]
-        Err(UpdateError::Unsupported(
-            "Unsupported platform for update install".to_string(),
-        ))
-    }
-
-    pub fn cleanup_staged(path: &Path) {
-        if let Some(parent) = path.parent() {
-            if let Some(name) = parent.file_name().and_then(|value| value.to_str()) {
-                if name.starts_with("timeshit-update-") {
-                    let _ = fs::remove_dir_all(parent);
-                }
-            }
-        }
     }
 
     pub fn open_release_page(url: &str) -> Result<(), UpdateError> {
@@ -272,16 +164,10 @@ mod enabled {
         let changelog_url = env::var(FORCE_UPDATE_URL_ENV).unwrap_or_else(|_| {
             "https://github.com/NoahNxT/Toggl2Timeshit/releases/latest".to_string()
         });
-        let (asset_name, url) = match mode {
-            ForcedUpdateMode::Installable => mock_download_asset(),
-            ForcedUpdateMode::Manual | ForcedUpdateMode::PackageManager => (None, None),
-        };
         let release_notes = forced_release_notes(mode, &latest);
 
         Ok(Some(UpdateInfo {
             latest,
-            asset_name,
-            url,
             changelog_url,
             release_notes,
         }))
@@ -317,26 +203,17 @@ mod enabled {
         Version::new(current.major, current.minor, current.patch + 1)
     }
 
-    fn mock_download_asset() -> (Option<String>, Option<String>) {
-        let asset_name = expected_asset_candidates()
-            .and_then(|mut values| values.pop())
-            .unwrap_or_else(|| "timeshit-update.tar.gz".to_string());
-        (
-            Some(asset_name),
-            Some("https://example.invalid/timeshit-update".to_string()),
-        )
-    }
-
     fn forced_release_notes(mode: ForcedUpdateMode, latest: &Version) -> Vec<String> {
         let mut notes = vec![format!("Previewing update dialog content for v{latest}.")];
-        if matches!(mode, ForcedUpdateMode::Installable) {
+        if matches!(mode, ForcedUpdateMode::PackageManager) {
             notes.push(
-                "This preview simulates a direct GitHub install with in-app update support."
+                "This preview simulates an install that should be updated outside the release page flow."
                     .to_string(),
             );
         } else {
             notes.push(
-                "This preview simulates an install that cannot self-update in the TUI.".to_string(),
+                "This preview simulates a direct GitHub install where pressing u opens the latest release page."
+                    .to_string(),
             );
         }
         notes.push(
@@ -356,12 +233,8 @@ mod enabled {
             return Ok(None);
         }
 
-        let asset = find_matching_release_asset(&release.assets);
-
         Ok(Some(UpdateInfo {
             latest,
-            asset_name: asset.as_ref().map(|value| value.name.clone()),
-            url: asset.map(|value| value.browser_download_url),
             changelog_url: release.html_url,
             release_notes: release_notes_from_markdown(&release.body),
         }))
@@ -404,42 +277,6 @@ mod enabled {
         lines
     }
 
-    fn find_matching_release_asset(assets: &[ReleaseAsset]) -> Option<ReleaseAsset> {
-        let candidates = expected_asset_candidates()?;
-        let candidate_set: std::collections::HashSet<String> = candidates
-            .into_iter()
-            .map(|name| name.to_lowercase())
-            .collect();
-
-        assets
-            .iter()
-            .find(|asset| candidate_set.contains(&asset.name.to_lowercase()))
-            .cloned()
-    }
-
-    fn expected_asset_candidates() -> Option<Vec<String>> {
-        let assets = match env::consts::OS {
-            "linux" => vec!["timeshit-linux.tar.gz", "timeshit-Linux.tar.gz"],
-            "macos" => vec!["timeshit-macos.tar.gz", "timeshit-macOS.tar.gz"],
-            "windows" => vec!["timeshit-windows.zip", "timeshit-Windows.zip"],
-            _ => return None,
-        };
-        Some(assets.into_iter().map(|value| value.to_string()).collect())
-    }
-
-    fn expected_binary_candidates() -> Result<Vec<String>, UpdateError> {
-        let binaries = match env::consts::OS {
-            "linux" => vec!["timeshit", "timeshit-Linux"],
-            "macos" => vec!["timeshit", "timeshit-macOS"],
-            "windows" => vec!["timeshit.exe"],
-            other => return Err(UpdateError::Unsupported(format!("Unsupported OS: {other}"))),
-        };
-        Ok(binaries
-            .into_iter()
-            .map(|value| value.to_string())
-            .collect())
-    }
-
     fn is_managed_install() -> bool {
         let exe = match std::env::current_exe() {
             Ok(path) => path,
@@ -470,58 +307,16 @@ mod enabled {
 
         false
     }
-
-    fn find_extracted_binary(dir: &Path, expected: &[String]) -> Result<PathBuf, UpdateError> {
-        for name in expected {
-            let direct = dir.join(name);
-            if direct.exists() {
-                return Ok(direct);
-            }
-        }
-
-        let entries = fs::read_dir(dir).map_err(|err| UpdateError::Io(err.to_string()))?;
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if let Some(name) = path.file_name().and_then(|value| value.to_str()) {
-                if expected.iter().any(|candidate| candidate == name) {
-                    return Ok(path);
-                }
-            }
-        }
-
-        Err(UpdateError::Parse(format!(
-            "Extracted binary {} not found",
-            expected.join(" or ")
-        )))
-    }
-
-    #[cfg(unix)]
-    fn install_update_unix(staged_path: &Path, current_exe: &Path) -> Result<(), UpdateError> {
-        fs::copy(staged_path, current_exe).map_err(|err| UpdateError::Io(err.to_string()))?;
-        fs::set_permissions(current_exe, fs::Permissions::from_mode(0o755))
-            .map_err(|err| UpdateError::Io(err.to_string()))?;
-        Ok(())
-    }
-
-    #[cfg(windows)]
-    fn install_update_windows(staged_path: &Path, current_exe: &Path) -> Result<(), UpdateError> {
-        let temp_path = current_exe.with_extension("exe.new");
-        fs::copy(staged_path, &temp_path).map_err(|err| UpdateError::Io(err.to_string()))?;
-        fs::rename(temp_path, current_exe).map_err(|err| UpdateError::Io(err.to_string()))?;
-        Ok(())
-    }
-
     #[cfg(test)]
     mod tests {
         use super::*;
 
         #[test]
-        fn newer_release_still_returns_update_without_matching_asset() {
+        fn newer_release_still_returns_update_info() {
             let release = Release {
                 tag_name: "v1.2.0".to_string(),
                 html_url: "https://example.com/releases/v1.2.0".to_string(),
                 body: String::new(),
-                assets: vec![],
             };
 
             let info = resolve_update_info(release, &Version::parse("1.1.0").unwrap())
@@ -529,7 +324,6 @@ mod enabled {
                 .expect("expected update info");
 
             assert_eq!(info.latest, Version::parse("1.2.0").unwrap());
-            assert!(!info.has_download());
         }
 
         #[test]
@@ -538,35 +332,11 @@ mod enabled {
                 tag_name: "v1.2.0".to_string(),
                 html_url: "https://example.com/releases/v1.2.0".to_string(),
                 body: String::new(),
-                assets: vec![],
             };
 
             let info = resolve_update_info(release, &Version::parse("1.2.0").unwrap()).unwrap();
 
             assert!(info.is_none());
-        }
-
-        #[test]
-        fn matching_asset_keeps_download_available() {
-            let Some(candidate) = expected_asset_candidates().and_then(|mut values| values.pop())
-            else {
-                return;
-            };
-            let release = Release {
-                tag_name: "v1.2.0".to_string(),
-                html_url: "https://example.com/releases/v1.2.0".to_string(),
-                body: String::new(),
-                assets: vec![ReleaseAsset {
-                    name: candidate,
-                    browser_download_url: "https://example.com/download".to_string(),
-                }],
-            };
-
-            let info = resolve_update_info(release, &Version::parse("1.1.0").unwrap())
-                .unwrap()
-                .expect("expected update info");
-
-            assert!(info.has_download());
         }
 
         #[test]
@@ -591,8 +361,6 @@ mod enabled {
 mod disabled {
     use std::env;
     use std::fmt;
-    use std::path::{Path, PathBuf};
-
     const FORCE_UPDATE_DIALOG_ENV: &str = "TIMESHIT_FORCE_UPDATE_DIALOG";
     const FORCE_UPDATE_VERSION_ENV: &str = "TIMESHIT_FORCE_UPDATE_VERSION";
     const FORCE_UPDATE_URL_ENV: &str = "TIMESHIT_FORCE_UPDATE_URL";
@@ -609,16 +377,8 @@ mod disabled {
     #[derive(Debug, Clone)]
     pub struct UpdateInfo {
         pub latest: Version,
-        pub asset_name: Option<String>,
-        pub url: Option<String>,
         pub changelog_url: String,
         pub release_notes: Vec<String>,
-    }
-
-    impl UpdateInfo {
-        pub fn has_download(&self) -> bool {
-            self.asset_name.is_some() && self.url.is_some()
-        }
     }
 
     #[derive(Debug)]
@@ -644,6 +404,10 @@ mod disabled {
         env::var(FORCE_UPDATE_DIALOG_ENV).is_ok()
     }
 
+    pub fn is_forced_update_dialog() -> bool {
+        env::var(FORCE_UPDATE_DIALOG_ENV).is_ok()
+    }
+
     pub fn is_direct_install() -> bool {
         !matches!(
             env::var(FORCE_UPDATE_DIALOG_ENV)
@@ -666,18 +430,8 @@ mod disabled {
         let changelog_url = env::var(FORCE_UPDATE_URL_ENV).unwrap_or_else(|_| {
             "https://github.com/NoahNxT/Toggl2Timeshit/releases/latest".to_string()
         });
-        let manual_mode = matches!(
-            env::var(FORCE_UPDATE_DIALOG_ENV)
-                .ok()
-                .map(|value| value.trim().to_ascii_lowercase())
-                .as_deref(),
-            Some("manual" | "download" | "managed" | "package" | "package-manager")
-        );
-
         Ok(Some(UpdateInfo {
             latest: Version(latest),
-            asset_name: (!manual_mode).then(|| "timeshit-update.tar.gz".to_string()),
-            url: (!manual_mode).then(|| "https://example.invalid/timeshit-update".to_string()),
             changelog_url,
             release_notes: vec![
                 "Previewing forced update dialog content.".to_string(),
@@ -686,20 +440,6 @@ mod disabled {
             ],
         }))
     }
-
-    pub fn download_and_extract(_info: &UpdateInfo) -> Result<PathBuf, UpdateError> {
-        Err(UpdateError::Unsupported(
-            "Updates are disabled in this build".to_string(),
-        ))
-    }
-
-    pub fn install_update(_staged_path: &Path, _current_exe: &Path) -> Result<(), UpdateError> {
-        Err(UpdateError::Unsupported(
-            "Updates are disabled in this build".to_string(),
-        ))
-    }
-
-    pub fn cleanup_staged(_path: &Path) {}
 
     pub fn open_release_page(_url: &str) -> Result<(), UpdateError> {
         Err(UpdateError::Unsupported(
