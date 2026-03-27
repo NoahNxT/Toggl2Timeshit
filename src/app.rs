@@ -368,7 +368,6 @@ impl App {
                 self.update_info = Some(info);
                 self.show_update_popup = true;
                 self.status = Some(message.clone());
-                self.set_toast(message, false);
             }
             Ok(None) => {
                 self.update_info = None;
