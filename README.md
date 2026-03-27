@@ -92,6 +92,10 @@ Release assets:
 
 ### Build from Source
 ```bash
+cd theme-studio
+bun install --frozen-lockfile
+bun run build
+cd ..
 cargo build --release
 ```
 Binary: `target/release/timeshit`

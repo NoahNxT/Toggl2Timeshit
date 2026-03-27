@@ -81,6 +81,9 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+
       - name: Guard missing Cloudsmith config
         run: |
           if [[ -z "${{ secrets.CLOUDSMITH_API_KEY }}" ]]; then
@@ -91,6 +94,14 @@ jobs:
             echo "CLOUDSMITH_REPO not set; skipping."
             exit 0
           fi
+
+      - name: Install Theme Studio dependencies
+        working-directory: theme-studio
+        run: bun install --frozen-lockfile
+
+      - name: Build Theme Studio
+        working-directory: theme-studio
+        run: bun run build
 
       - name: Build release
         run: cargo build --release
