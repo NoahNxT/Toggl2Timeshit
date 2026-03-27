@@ -695,35 +695,100 @@ fn draw_update_popup(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
             Style::default().add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
-        Line::from(format!("Current: v{}", update::current_version())),
-        Line::from(format!("Latest:  v{}", info.latest)),
+        Line::from(vec![
+            Span::styled("Current: ", theme.muted_style()),
+            Span::styled(
+                format!("v{}", update::current_version()),
+                Style::default().fg(theme.highlight),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("Latest:  ", theme.muted_style()),
+            Span::styled(
+                format!("v{}", info.latest),
+                Style::default()
+                    .fg(theme.success)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]),
     ];
 
     if !info.release_notes.is_empty() {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
             "What's Changed",
-            Style::default().add_modifier(Modifier::BOLD),
+            theme.title_style(),
         )));
         lines.push(Line::from(""));
         for note in info.release_notes.iter().take(8) {
-            lines.push(Line::from(note.clone()));
+            lines.push(update_note_line(note, theme));
         }
     }
 
     lines.push(Line::from(""));
-    lines.push(Line::from(action));
-    lines.push(Line::from(if app.update_installable {
-        "Press u, or Enter/Esc dismiss"
-    } else {
-        "Enter or Esc dismiss"
-    }));
+    lines.push(Line::from(Span::styled(
+        action,
+        Style::default()
+            .fg(theme.highlight)
+            .add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(Span::styled(
+        "Enter/Esc dismiss",
+        theme.muted_style(),
+    )));
 
     let paragraph = Paragraph::new(lines)
         .alignment(Alignment::Left)
         .block(panel_block("Update Available", theme))
         .wrap(Wrap { trim: true });
     frame.render_widget(paragraph, block);
+}
+
+fn update_note_line(note: &str, theme: &Theme) -> Line<'static> {
+    if note.is_empty() {
+        return Line::from("");
+    }
+
+    if let Some(rest) = note.strip_prefix("• ") {
+        return Line::from(vec![
+            Span::styled(
+                "• ",
+                Style::default()
+                    .fg(theme.highlight)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(rest.to_string()),
+        ]);
+    }
+
+    if let Some(rest) = note.strip_prefix("Full Changelog: ") {
+        return Line::from(vec![
+            Span::styled("Full Changelog: ", theme.muted_style()),
+            Span::styled(
+                rest.to_string(),
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::UNDERLINED),
+            ),
+        ]);
+    }
+
+    if let Some(first) = note.chars().next()
+        && !first.is_ascii()
+    {
+        let idx = first.len_utf8();
+        return Line::from(vec![
+            Span::styled(
+                first.to_string(),
+                Style::default()
+                    .fg(theme.highlight)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(note[idx..].to_string()),
+        ]);
+    }
+
+    Line::from(note.to_string())
 }
 
 fn draw_login(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {

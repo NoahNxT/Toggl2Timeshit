@@ -354,6 +354,20 @@ mod enabled {
                 ]
             );
         }
+
+        #[test]
+        fn release_notes_preserve_emoji_content() {
+            let notes =
+                release_notes_from_markdown("✨ feat: add updater polish\n- 🐛 fix popup copy");
+
+            assert_eq!(
+                notes,
+                vec![
+                    "✨ feat: add updater polish".to_string(),
+                    "• 🐛 fix popup copy".to_string()
+                ]
+            );
+        }
     }
 }
 
