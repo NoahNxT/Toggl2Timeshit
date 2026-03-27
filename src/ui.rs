@@ -168,6 +168,7 @@ fn draw_dashboard(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
 }
 
 fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
+    let special_day_hours = SpecialDayHours::from_app(app);
     let content = area.inner(Margin {
         vertical: 1,
         horizontal: 2,
@@ -215,8 +216,7 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
                     app.credit_sick_days_as_worked(),
                     app.vacation_days(),
                     app.sick_days(),
-                    app.vacation_day_hours(),
-                    app.sick_day_hours(),
+                    special_day_hours,
                 );
                 let (target, _) = period_target_hours(
                     period,
@@ -224,17 +224,16 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
                     app.rollups_include_weekends,
                     app.vacation_days(),
                     app.sick_days(),
-                    app.vacation_day_hours(),
-                    app.sick_day_hours(),
+                    special_day_hours,
                 );
-                let delta = normalize_delta(hours - target);
-                let delta_style = delta_style(delta, theme);
+                let overtime = normalize_delta(hours - target);
+                let overtime_style = delta_style(overtime, theme);
                 let missing_days = app.rollup_period_missing_days(period);
                 let mut spans = vec![
                     Span::styled(&period.label, Style::default().add_modifier(Modifier::BOLD)),
                     Span::raw("  "),
                     Span::styled(format!("{:.2}h", hours), theme.muted_style()),
-                    Span::styled(format!("  {:+.2}h", delta), delta_style),
+                    Span::styled(format!("  {:+.2}h", overtime), overtime_style),
                 ];
                 if missing_days > 0 {
                     spans.push(Span::raw("  "));
@@ -306,8 +305,7 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
             app.credit_sick_days_as_worked(),
             app.vacation_days(),
             app.sick_days(),
-            app.vacation_day_hours(),
-            app.sick_day_hours(),
+            special_day_hours,
         );
         let (target_hours, target_days) = period_target_hours(
             period,
@@ -315,22 +313,18 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
             app.rollups_include_weekends,
             app.vacation_days(),
             app.sick_days(),
-            app.vacation_day_hours(),
-            app.sick_day_hours(),
+            special_day_hours,
         );
-        let delta = normalize_delta(total_hours - target_hours);
-        let overtime = period_overtime_left_hours(
+        let overtime = period_overtime_hours(
             period,
             &app.rollups.daily,
             app.target_hours,
             app.rollups_include_weekends,
             app.vacation_days(),
             app.sick_days(),
-            app.vacation_day_hours(),
-            app.sick_day_hours(),
+            special_day_hours,
             app.credit_vacation_days_as_worked(),
             app.credit_sick_days_as_worked(),
-            app.date_range.end_date(),
         );
         let (worked_hours, worked_days) = period_worked_totals_until(
             period,
@@ -340,8 +334,7 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
             app.credit_sick_days_as_worked(),
             app.vacation_days(),
             app.sick_days(),
-            app.vacation_day_hours(),
-            app.sick_day_hours(),
+            special_day_hours,
         );
         let avg = if worked_days > 0 {
             worked_hours / worked_days as f64
@@ -360,12 +353,8 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
                 target_hours, target_days
             )),
             Line::from(vec![
-                Span::raw("Delta: "),
-                Span::styled(format!("{:+.2}h", delta), delta_style(delta, theme)),
-            ]),
-            Line::from(vec![
                 Span::raw("Overtime: "),
-                Span::styled(format!("{:.2}h", overtime), delta_style(overtime, theme)),
+                Span::styled(format!("{:+.2}h", overtime), delta_style(overtime, theme)),
             ]),
             Line::from(format!("Avg/day (worked): {:.2}h", avg)),
             if missing_days == 0 {
@@ -391,8 +380,7 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
                 app.credit_sick_days_as_worked(),
                 app.vacation_days(),
                 app.sick_days(),
-                app.vacation_day_hours(),
-                app.sick_day_hours(),
+                special_day_hours,
             );
             let day_target = target_hours_for_day(
                 day.date,
@@ -400,8 +388,7 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
                 app.rollups_include_weekends,
                 app.vacation_days(),
                 app.sick_days(),
-                app.vacation_day_hours(),
-                app.sick_day_hours(),
+                special_day_hours,
             );
             let day_delta = normalize_delta(hours - day_target);
             let label = day.date.format("%a %Y-%m-%d").to_string();
@@ -441,8 +428,7 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
             app.rollups_include_weekends,
             app.vacation_days(),
             app.sick_days(),
-            app.vacation_day_hours(),
-            app.sick_day_hours(),
+            special_day_hours,
             app.credit_vacation_days_as_worked(),
             app.credit_sick_days_as_worked(),
             app.rollup_fetched_days(),
@@ -574,6 +560,7 @@ fn rollups_footer_line(app: &mut App, theme: &Theme) -> Line<'static> {
 }
 
 fn header_line(app: &App, theme: &Theme) -> Line<'static> {
+    let special_day_hours = SpecialDayHours::from_app(app);
     let workspace = app
         .selected_workspace
         .as_ref()
@@ -585,9 +572,19 @@ fn header_line(app: &App, theme: &Theme) -> Line<'static> {
         .unwrap_or_else(|| "Never".to_string());
     let active_day = app.date_range.end_date();
     let special_day = if app.is_vacation_day(active_day) {
-        Some(format!("Vacation ({:.2}h)", app.vacation_day_hours()))
+        Some(format_special_day_label(
+            "Vacation",
+            special_day_hours.vacation_target_hours,
+            special_day_hours.vacation_credit_hours,
+            false,
+        ))
     } else if app.is_sick_day(active_day) {
-        Some(format!("Sick ({:.2}h)", app.sick_day_hours()))
+        Some(format_special_day_label(
+            "Sick",
+            special_day_hours.sick_target_hours,
+            special_day_hours.sick_credit_hours,
+            false,
+        ))
     } else {
         None
     };
@@ -949,12 +946,60 @@ fn delta_style(value: f64, theme: &Theme) -> Style {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct SpecialDayHours {
+    vacation_target_hours: f64,
+    vacation_credit_hours: f64,
+    sick_target_hours: f64,
+    sick_credit_hours: f64,
+}
+
+impl SpecialDayHours {
+    fn from_app(app: &App) -> Self {
+        Self {
+            vacation_target_hours: app.vacation_day_target_hours(),
+            vacation_credit_hours: app.vacation_day_credit_hours(),
+            sick_target_hours: app.sick_day_target_hours(),
+            sick_credit_hours: app.sick_day_credit_hours(),
+        }
+    }
+}
+
+fn format_special_day_label(
+    label: &str,
+    target_hours: f64,
+    credit_hours: f64,
+    bracketed: bool,
+) -> String {
+    let prefix = if bracketed { " [" } else { "" };
+    let suffix = if bracketed { "]" } else { "" };
+    if normalize_delta(target_hours - credit_hours) == 0.0 {
+        format!("{prefix}{label} {:.2}h{suffix}", credit_hours)
+    } else {
+        format!(
+            "{prefix}{label} {:.2}h credit / {:.2}h target{suffix}",
+            credit_hours, target_hours
+        )
+    }
+}
+
 fn special_day_suffix(app: &App, day: NaiveDate) -> String {
+    let special_day_hours = SpecialDayHours::from_app(app);
     if app.is_sick_day(day) {
-        return format!(" [sick {:.2}h]", app.sick_day_hours());
+        return format_special_day_label(
+            "sick",
+            special_day_hours.sick_target_hours,
+            special_day_hours.sick_credit_hours,
+            true,
+        );
     }
     if app.is_vacation_day(day) {
-        return format!(" [vacation {:.2}h]", app.vacation_day_hours());
+        return format_special_day_label(
+            "vacation",
+            special_day_hours.vacation_target_hours,
+            special_day_hours.vacation_credit_hours,
+            true,
+        );
     }
     String::new()
 }
@@ -965,14 +1010,13 @@ fn special_day_credit_hours(
     credit_sick_days_as_worked: bool,
     vacation_days: &HashSet<NaiveDate>,
     sick_days: &HashSet<NaiveDate>,
-    vacation_day_hours: f64,
-    sick_day_hours: f64,
+    special_day_hours: SpecialDayHours,
 ) -> f64 {
     if credit_sick_days_as_worked && sick_days.contains(&day) {
-        return sick_day_hours;
+        return special_day_hours.sick_credit_hours;
     }
     if credit_vacation_days_as_worked && vacation_days.contains(&day) {
-        return vacation_day_hours;
+        return special_day_hours.vacation_credit_hours;
     }
     0.0
 }
@@ -984,8 +1028,7 @@ fn effective_hours_for_day(
     credit_sick_days_as_worked: bool,
     vacation_days: &HashSet<NaiveDate>,
     sick_days: &HashSet<NaiveDate>,
-    vacation_day_hours: f64,
-    sick_day_hours: f64,
+    special_day_hours: SpecialDayHours,
 ) -> f64 {
     let credit = special_day_credit_hours(
         day,
@@ -993,8 +1036,7 @@ fn effective_hours_for_day(
         credit_sick_days_as_worked,
         vacation_days,
         sick_days,
-        vacation_day_hours,
-        sick_day_hours,
+        special_day_hours,
     );
     worked_hours.max(credit)
 }
@@ -1006,8 +1048,7 @@ fn period_effective_hours(
     credit_sick_days_as_worked: bool,
     vacation_days: &HashSet<NaiveDate>,
     sick_days: &HashSet<NaiveDate>,
-    vacation_day_hours: f64,
-    sick_day_hours: f64,
+    special_day_hours: SpecialDayHours,
 ) -> f64 {
     daily
         .iter()
@@ -1020,8 +1061,7 @@ fn period_effective_hours(
                 credit_sick_days_as_worked,
                 vacation_days,
                 sick_days,
-                vacation_day_hours,
-                sick_day_hours,
+                special_day_hours,
             )
         })
         .sum()
@@ -1033,8 +1073,7 @@ fn period_target_hours(
     include_weekends: bool,
     vacation_days: &HashSet<NaiveDate>,
     sick_days: &HashSet<NaiveDate>,
-    vacation_day_hours: f64,
-    sick_day_hours: f64,
+    special_day_hours: SpecialDayHours,
 ) -> (f64, usize) {
     let mut days = 0usize;
     let mut total = 0.0;
@@ -1046,8 +1085,7 @@ fn period_target_hours(
             include_weekends,
             vacation_days,
             sick_days,
-            vacation_day_hours,
-            sick_day_hours,
+            special_day_hours,
         );
         if target > 0.0 {
             days += 1;
@@ -1058,55 +1096,35 @@ fn period_target_hours(
     (total, days)
 }
 
-fn period_overtime_left_hours(
+fn period_overtime_hours(
     period: &PeriodRollup,
     daily: &[DailyTotal],
     target_hours: f64,
     include_weekends: bool,
     vacation_days: &HashSet<NaiveDate>,
     sick_days: &HashSet<NaiveDate>,
-    vacation_day_hours: f64,
-    sick_day_hours: f64,
+    special_day_hours: SpecialDayHours,
     credit_vacation_days_as_worked: bool,
     credit_sick_days_as_worked: bool,
-    active_end: NaiveDate,
 ) -> f64 {
-    let cutoff = period.end.min(active_end);
-    if cutoff < period.start {
-        return 0.0;
-    }
-
-    let (worked_total, target_total) = daily
-        .iter()
-        .filter(|day| day.date >= period.start && day.date <= cutoff)
-        .fold((0.0f64, 0.0f64), |(worked, target), day| {
-            (
-                worked
-                    + effective_hours_for_day(
-                        day.date,
-                        hours_from_seconds(day.seconds),
-                        credit_vacation_days_as_worked,
-                        credit_sick_days_as_worked,
-                        vacation_days,
-                        sick_days,
-                        vacation_day_hours,
-                        sick_day_hours,
-                    ),
-                target
-                    + target_hours_for_day(
-                        day.date,
-                        target_hours,
-                        include_weekends,
-                        vacation_days,
-                        sick_days,
-                        vacation_day_hours,
-                        sick_day_hours,
-                    ),
-            )
-        });
-
-    let overtime = normalize_delta(worked_total - target_total);
-    if overtime > 0.0 { overtime } else { 0.0 }
+    let worked_total = period_effective_hours(
+        period,
+        daily,
+        credit_vacation_days_as_worked,
+        credit_sick_days_as_worked,
+        vacation_days,
+        sick_days,
+        special_day_hours,
+    );
+    let (target_total, _) = period_target_hours(
+        period,
+        target_hours,
+        include_weekends,
+        vacation_days,
+        sick_days,
+        special_day_hours,
+    );
+    normalize_delta(worked_total - target_total)
 }
 
 fn period_worked_totals_until(
@@ -1117,8 +1135,7 @@ fn period_worked_totals_until(
     credit_sick_days_as_worked: bool,
     vacation_days: &HashSet<NaiveDate>,
     sick_days: &HashSet<NaiveDate>,
-    vacation_day_hours: f64,
-    sick_day_hours: f64,
+    special_day_hours: SpecialDayHours,
 ) -> (f64, usize) {
     let cutoff = period.end.min(active_end);
     if cutoff < period.start {
@@ -1136,8 +1153,7 @@ fn period_worked_totals_until(
                 credit_sick_days_as_worked,
                 vacation_days,
                 sick_days,
-                vacation_day_hours,
-                sick_day_hours,
+                special_day_hours,
             );
             if effective > 0.0 {
                 (worked_hours + effective, worked_days + 1)
@@ -1153,14 +1169,13 @@ fn target_hours_for_day(
     include_weekends: bool,
     vacation_days: &HashSet<NaiveDate>,
     sick_days: &HashSet<NaiveDate>,
-    vacation_day_hours: f64,
-    sick_day_hours: f64,
+    special_day_hours: SpecialDayHours,
 ) -> f64 {
     if sick_days.contains(&day) {
-        return sick_day_hours;
+        return special_day_hours.sick_target_hours;
     }
     if vacation_days.contains(&day) {
-        return vacation_day_hours;
+        return special_day_hours.vacation_target_hours;
     }
     if include_weekends || day.weekday().number_from_monday() <= 5 {
         target_hours
@@ -1184,8 +1199,7 @@ fn build_calendar_lines(
     include_weekends: bool,
     vacation_days: &HashSet<NaiveDate>,
     sick_days: &HashSet<NaiveDate>,
-    vacation_day_hours: f64,
-    sick_day_hours: f64,
+    special_day_hours: SpecialDayHours,
     credit_vacation_days_as_worked: bool,
     credit_sick_days_as_worked: bool,
     fetched_days: &HashSet<NaiveDate>,
@@ -1202,8 +1216,7 @@ fn build_calendar_lines(
             include_weekends,
             vacation_days,
             sick_days,
-            vacation_day_hours,
-            sick_day_hours,
+            special_day_hours,
             credit_vacation_days_as_worked,
             credit_sick_days_as_worked,
             fetched_days,
@@ -1220,8 +1233,7 @@ fn build_calendar_lines(
             include_weekends,
             vacation_days,
             sick_days,
-            vacation_day_hours,
-            sick_day_hours,
+            special_day_hours,
             credit_vacation_days_as_worked,
             credit_sick_days_as_worked,
             fetched_days,
@@ -1240,8 +1252,7 @@ fn build_period_calendar_grid_lines(
     include_weekends: bool,
     vacation_days: &HashSet<NaiveDate>,
     sick_days: &HashSet<NaiveDate>,
-    vacation_day_hours: f64,
-    sick_day_hours: f64,
+    special_day_hours: SpecialDayHours,
     credit_vacation_days_as_worked: bool,
     credit_sick_days_as_worked: bool,
     fetched_days: &HashSet<NaiveDate>,
@@ -1372,8 +1383,7 @@ fn build_period_calendar_grid_lines(
                         credit_sick_days_as_worked,
                         vacation_days,
                         sick_days,
-                        vacation_day_hours,
-                        sick_day_hours,
+                        special_day_hours,
                     );
                     let delta = normalize_delta(
                         hours
@@ -1383,8 +1393,7 @@ fn build_period_calendar_grid_lines(
                                 include_weekends,
                                 vacation_days,
                                 sick_days,
-                                vacation_day_hours,
-                                sick_day_hours,
+                                special_day_hours,
                             ),
                     );
                     let mut style = if is_fetched {
@@ -1473,8 +1482,7 @@ fn build_yearly_calendar_lines(
     include_weekends: bool,
     vacation_days: &HashSet<NaiveDate>,
     sick_days: &HashSet<NaiveDate>,
-    vacation_day_hours: f64,
-    sick_day_hours: f64,
+    special_day_hours: SpecialDayHours,
     credit_vacation_days_as_worked: bool,
     credit_sick_days_as_worked: bool,
     fetched_days: &HashSet<NaiveDate>,
@@ -1523,8 +1531,7 @@ fn build_yearly_calendar_lines(
                 include_weekends,
                 vacation_days,
                 sick_days,
-                vacation_day_hours,
-                sick_day_hours,
+                special_day_hours,
                 credit_vacation_days_as_worked,
                 credit_sick_days_as_worked,
                 fetched_days,
@@ -1851,22 +1858,41 @@ fn draw_settings(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
                     };
                     ("Target hours", value, false)
                 }
-                SettingsItem::VacationDayHours => {
+                SettingsItem::VacationTargetHours => {
                     let value =
-                        if is_editing && editing_item == Some(SettingsItem::VacationDayHours) {
+                        if is_editing && editing_item == Some(SettingsItem::VacationTargetHours) {
                             app.settings_input_value().to_string()
                         } else {
-                            format!("{:.2}h", app.settings_vacation_day_hours_display())
+                            format!("{:.2}h", app.settings_vacation_target_hours_display())
                         };
-                    ("Vacation day hours", value, false)
+                    ("Vacation target hours", value, false)
                 }
-                SettingsItem::SickDayHours => {
-                    let value = if is_editing && editing_item == Some(SettingsItem::SickDayHours) {
+                SettingsItem::VacationCreditHours => {
+                    let value =
+                        if is_editing && editing_item == Some(SettingsItem::VacationCreditHours) {
+                            app.settings_input_value().to_string()
+                        } else {
+                            format!("{:.2}h", app.settings_vacation_credit_hours_display())
+                        };
+                    ("Vacation credit hours", value, false)
+                }
+                SettingsItem::SickTargetHours => {
+                    let value = if is_editing && editing_item == Some(SettingsItem::SickTargetHours)
+                    {
                         app.settings_input_value().to_string()
                     } else {
-                        format!("{:.2}h", app.settings_sick_day_hours_display())
+                        format!("{:.2}h", app.settings_sick_target_hours_display())
                     };
-                    ("Sick day hours", value, false)
+                    ("Sick target hours", value, false)
+                }
+                SettingsItem::SickCreditHours => {
+                    let value = if is_editing && editing_item == Some(SettingsItem::SickCreditHours)
+                    {
+                        app.settings_input_value().to_string()
+                    } else {
+                        format!("{:.2}h", app.settings_sick_credit_hours_display())
+                    };
+                    ("Sick credit hours", value, false)
                 }
                 SettingsItem::RollupsIncludeWeekends => {
                     let enabled = app.settings_rollups_include_weekends_display();
@@ -1977,8 +2003,10 @@ fn draw_settings(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
         SettingsFocus::Items => "Up/Down select • Enter edit • Esc categories",
         SettingsFocus::Edit => match editing_item {
             Some(SettingsItem::TargetHours)
-            | Some(SettingsItem::VacationDayHours)
-            | Some(SettingsItem::SickDayHours)
+            | Some(SettingsItem::VacationTargetHours)
+            | Some(SettingsItem::VacationCreditHours)
+            | Some(SettingsItem::SickTargetHours)
+            | Some(SettingsItem::SickCreditHours)
             | Some(SettingsItem::TogglToken) => "Enter save • Esc cancel",
             Some(SettingsItem::Theme)
             | Some(SettingsItem::RollupsIncludeWeekends)
@@ -2137,5 +2165,181 @@ fn theme_label(theme: ThemePreference) -> &'static str {
         ThemePreference::Terminal => "Terminal",
         ThemePreference::Dark => "Midnight",
         ThemePreference::Light => "Snow",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn date(year: i32, month: u32, day: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(year, month, day).unwrap()
+    }
+
+    fn daily_total(year: i32, month: u32, day: u32, hours: f64) -> DailyTotal {
+        DailyTotal {
+            date: date(year, month, day),
+            seconds: (hours * 3600.0).round() as i64,
+        }
+    }
+
+    fn march_2026_period() -> PeriodRollup {
+        PeriodRollup {
+            label: "Mar 2026".to_string(),
+            start: date(2026, 3, 1),
+            end: date(2026, 3, 31),
+            days: 31,
+            seconds: 0,
+        }
+    }
+
+    fn approx_eq(actual: f64, expected: f64) {
+        assert!(
+            (actual - expected).abs() < 0.000_1,
+            "expected {expected:.4}, got {actual:.4}"
+        );
+    }
+
+    #[test]
+    fn sick_day_credit_and_target_hours_are_calculated_separately() {
+        let period = march_2026_period();
+        let daily = vec![
+            daily_total(2026, 3, 2, 0.0),
+            daily_total(2026, 3, 3, 0.0),
+            daily_total(2026, 3, 4, 0.0),
+            daily_total(2026, 3, 5, 0.0),
+            daily_total(2026, 3, 6, 10.5),
+            daily_total(2026, 3, 9, 14.0),
+            daily_total(2026, 3, 10, 10.5),
+            daily_total(2026, 3, 11, 9.5),
+            daily_total(2026, 3, 12, 8.0),
+            daily_total(2026, 3, 13, 10.0),
+            daily_total(2026, 3, 16, 11.75),
+            daily_total(2026, 3, 17, 6.0),
+            daily_total(2026, 3, 18, 8.75),
+            daily_total(2026, 3, 19, 10.25),
+            daily_total(2026, 3, 20, 10.25),
+            daily_total(2026, 3, 23, 9.25),
+            daily_total(2026, 3, 24, 7.0),
+            daily_total(2026, 3, 25, 7.0),
+            daily_total(2026, 3, 26, 11.5),
+            daily_total(2026, 3, 27, 4.0),
+        ];
+        let vacation_days = HashSet::new();
+        let sick_days = HashSet::from([
+            date(2026, 3, 2),
+            date(2026, 3, 3),
+            date(2026, 3, 4),
+            date(2026, 3, 5),
+        ]);
+        let special_day_hours = SpecialDayHours {
+            vacation_target_hours: 8.0,
+            vacation_credit_hours: 7.6,
+            sick_target_hours: 8.0,
+            sick_credit_hours: 7.6,
+        };
+
+        let total = period_effective_hours(
+            &period,
+            &daily,
+            false,
+            true,
+            &vacation_days,
+            &sick_days,
+            special_day_hours,
+        );
+        let (target, target_days) = period_target_hours(
+            &period,
+            8.0,
+            false,
+            &vacation_days,
+            &sick_days,
+            special_day_hours,
+        );
+        let delta = normalize_delta(total - target);
+        let overtime = period_overtime_hours(
+            &period,
+            &daily,
+            8.0,
+            false,
+            &vacation_days,
+            &sick_days,
+            special_day_hours,
+            false,
+            true,
+        );
+
+        approx_eq(total, 178.65);
+        approx_eq(target, 176.0);
+        approx_eq(delta, 2.65);
+        approx_eq(overtime, 2.65);
+        assert_eq!(target_days, 22);
+    }
+
+    #[test]
+    fn vacation_day_credit_and_target_hours_are_calculated_separately() {
+        let period = PeriodRollup {
+            label: "Apr 2026".to_string(),
+            start: date(2026, 4, 6),
+            end: date(2026, 4, 10),
+            days: 5,
+            seconds: 0,
+        };
+        let daily = vec![
+            daily_total(2026, 4, 6, 0.0),
+            daily_total(2026, 4, 7, 8.0),
+            daily_total(2026, 4, 8, 8.0),
+            daily_total(2026, 4, 9, 8.0),
+            daily_total(2026, 4, 10, 8.0),
+        ];
+        let vacation_days = HashSet::from([date(2026, 4, 6)]);
+        let sick_days = HashSet::new();
+        let special_day_hours = SpecialDayHours {
+            vacation_target_hours: 8.25,
+            vacation_credit_hours: 6.75,
+            sick_target_hours: 8.0,
+            sick_credit_hours: 7.5,
+        };
+
+        let total = period_effective_hours(
+            &period,
+            &daily,
+            true,
+            false,
+            &vacation_days,
+            &sick_days,
+            special_day_hours,
+        );
+        let (target, target_days) = period_target_hours(
+            &period,
+            8.0,
+            false,
+            &vacation_days,
+            &sick_days,
+            special_day_hours,
+        );
+        let day_credit = effective_hours_for_day(
+            date(2026, 4, 6),
+            0.0,
+            true,
+            false,
+            &vacation_days,
+            &sick_days,
+            special_day_hours,
+        );
+        let day_target = target_hours_for_day(
+            date(2026, 4, 6),
+            8.0,
+            false,
+            &vacation_days,
+            &sick_days,
+            special_day_hours,
+        );
+
+        approx_eq(total, 38.75);
+        approx_eq(target, 40.25);
+        approx_eq(day_credit, 6.75);
+        approx_eq(day_target, 8.25);
+        assert_eq!(target_days, 5);
     }
 }

@@ -41,10 +41,14 @@ Rounding is applied to each **grouped entry line** (per description). Project to
   If enabled, each vacation day contributes its configured vacation-day hours to worked totals.
 - **Credit sick as worked**  
   If enabled, each sick day contributes its configured sick-day hours to worked totals.
-- **Vacation day hours**  
+- **Vacation target hours**  
   Target hours counted for days marked as vacation (`k` shortcut).
-- **Sick day hours**  
+- **Vacation credit hours**  
+  Worked hours credited when “Credit vacation as worked” is enabled.
+- **Sick target hours**  
   Target hours counted for days marked as sick (`j` shortcut).
+- **Sick credit hours**  
+  Worked hours credited when “Credit sick as worked” is enabled.
 
 ## Integrations
 - **Toggl token**  

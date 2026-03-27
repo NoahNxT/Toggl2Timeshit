@@ -99,10 +99,20 @@ struct Config {
     vacation_days: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     sick_days: Vec<String>,
+    // Legacy field; used as fallback for both target and credit hours.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     vacation_day_hours: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    vacation_day_target_hours: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    vacation_day_credit_hours: Option<f64>,
+    // Legacy field; used as fallback for both target and credit hours.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     sick_day_hours: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sick_day_target_hours: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sick_day_credit_hours: Option<f64>,
     // Legacy field; used as fallback for both specific toggles.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     credit_special_days_as_worked: Option<bool>,
@@ -205,23 +215,61 @@ pub fn write_special_days(
     write_config(&config)
 }
 
-pub fn read_vacation_day_hours() -> Option<f64> {
-    read_config().and_then(|config| config.vacation_day_hours)
+fn config_vacation_day_target_hours(config: &Config) -> Option<f64> {
+    config.vacation_day_target_hours.or(config.target_hours)
 }
 
-pub fn write_vacation_day_hours(value: f64) -> Result<(), io::Error> {
+fn config_vacation_day_credit_hours(config: &Config) -> Option<f64> {
+    config
+        .vacation_day_credit_hours
+        .or(config.vacation_day_hours)
+}
+
+fn config_sick_day_target_hours(config: &Config) -> Option<f64> {
+    config.sick_day_target_hours.or(config.target_hours)
+}
+
+fn config_sick_day_credit_hours(config: &Config) -> Option<f64> {
+    config.sick_day_credit_hours.or(config.sick_day_hours)
+}
+
+pub fn read_vacation_day_target_hours() -> Option<f64> {
+    read_config().and_then(|config| config_vacation_day_target_hours(&config))
+}
+
+pub fn write_vacation_day_target_hours(value: f64) -> Result<(), io::Error> {
     let mut config = read_config().unwrap_or_default();
-    config.vacation_day_hours = Some(value);
+    config.vacation_day_target_hours = Some(value);
     write_config(&config)
 }
 
-pub fn read_sick_day_hours() -> Option<f64> {
-    read_config().and_then(|config| config.sick_day_hours)
+pub fn read_vacation_day_credit_hours() -> Option<f64> {
+    read_config().and_then(|config| config_vacation_day_credit_hours(&config))
 }
 
-pub fn write_sick_day_hours(value: f64) -> Result<(), io::Error> {
+pub fn write_vacation_day_credit_hours(value: f64) -> Result<(), io::Error> {
     let mut config = read_config().unwrap_or_default();
-    config.sick_day_hours = Some(value);
+    config.vacation_day_credit_hours = Some(value);
+    write_config(&config)
+}
+
+pub fn read_sick_day_target_hours() -> Option<f64> {
+    read_config().and_then(|config| config_sick_day_target_hours(&config))
+}
+
+pub fn write_sick_day_target_hours(value: f64) -> Result<(), io::Error> {
+    let mut config = read_config().unwrap_or_default();
+    config.sick_day_target_hours = Some(value);
+    write_config(&config)
+}
+
+pub fn read_sick_day_credit_hours() -> Option<f64> {
+    read_config().and_then(|config| config_sick_day_credit_hours(&config))
+}
+
+pub fn write_sick_day_credit_hours(value: f64) -> Result<(), io::Error> {
+    let mut config = read_config().unwrap_or_default();
+    config.sick_day_credit_hours = Some(value);
     write_config(&config)
 }
 
@@ -459,6 +507,39 @@ mod tests {
         assert!(vacation_days.contains(&NaiveDate::from_ymd_opt(2026, 2, 10).unwrap()));
         assert!(vacation_days.contains(&NaiveDate::from_ymd_opt(2026, 2, 12).unwrap()));
         assert!(sick_days.contains(&NaiveDate::from_ymd_opt(2026, 2, 11).unwrap()));
+    }
+
+    #[test]
+    fn legacy_special_day_hours_map_to_credit_and_normal_target_defaults() {
+        let config = Config {
+            target_hours: Some(8.0),
+            vacation_day_hours: Some(7.6),
+            sick_day_hours: Some(6.8),
+            ..Config::default()
+        };
+
+        assert_eq!(config_vacation_day_target_hours(&config), Some(8.0));
+        assert_eq!(config_vacation_day_credit_hours(&config), Some(7.6));
+        assert_eq!(config_sick_day_target_hours(&config), Some(8.0));
+        assert_eq!(config_sick_day_credit_hours(&config), Some(6.8));
+    }
+
+    #[test]
+    fn explicit_special_day_target_and_credit_hours_override_legacy_values() {
+        let config = Config {
+            vacation_day_hours: Some(7.6),
+            vacation_day_target_hours: Some(8.0),
+            vacation_day_credit_hours: Some(7.2),
+            sick_day_hours: Some(7.6),
+            sick_day_target_hours: Some(8.0),
+            sick_day_credit_hours: Some(7.4),
+            ..Config::default()
+        };
+
+        assert_eq!(config_vacation_day_target_hours(&config), Some(8.0));
+        assert_eq!(config_vacation_day_credit_hours(&config), Some(7.2));
+        assert_eq!(config_sick_day_target_hours(&config), Some(8.0));
+        assert_eq!(config_sick_day_credit_hours(&config), Some(7.4));
     }
 
     #[test]

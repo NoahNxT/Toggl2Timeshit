@@ -84,8 +84,10 @@ pub enum SettingsFocus {
 pub enum SettingsItem {
     Theme,
     TargetHours,
-    VacationDayHours,
-    SickDayHours,
+    VacationTargetHours,
+    VacationCreditHours,
+    SickTargetHours,
+    SickCreditHours,
     CreditVacationDays,
     CreditSickDays,
     RollupsIncludeWeekends,
@@ -135,8 +137,10 @@ pub struct App {
     rollup_fetched_days: HashSet<NaiveDate>,
     vacation_days: HashSet<NaiveDate>,
     sick_days: HashSet<NaiveDate>,
-    vacation_day_hours: f64,
-    sick_day_hours: f64,
+    vacation_day_target_hours: f64,
+    vacation_day_credit_hours: f64,
+    sick_day_target_hours: f64,
+    sick_day_credit_hours: f64,
     credit_vacation_days_as_worked: bool,
     credit_sick_days_as_worked: bool,
     pub last_refresh: Option<DateTime<Local>>,
@@ -197,8 +201,13 @@ impl App {
         let rounding = storage::read_rounding();
         let rollup_preferences = storage::read_rollup_preferences();
         let special_days = storage::read_special_days();
-        let vacation_day_hours = storage::read_vacation_day_hours().unwrap_or(target_hours);
-        let sick_day_hours = storage::read_sick_day_hours().unwrap_or(target_hours);
+        let vacation_day_target_hours =
+            storage::read_vacation_day_target_hours().unwrap_or(target_hours);
+        let vacation_day_credit_hours =
+            storage::read_vacation_day_credit_hours().unwrap_or(vacation_day_target_hours);
+        let sick_day_target_hours = storage::read_sick_day_target_hours().unwrap_or(target_hours);
+        let sick_day_credit_hours =
+            storage::read_sick_day_credit_hours().unwrap_or(sick_day_target_hours);
         let credit_vacation_days_as_worked = storage::read_credit_vacation_days_as_worked();
         let credit_sick_days_as_worked = storage::read_credit_sick_days_as_worked();
         let token_hash = token.as_ref().map(|value| storage::hash_token(value));
@@ -252,8 +261,10 @@ impl App {
             rollup_fetched_days: HashSet::new(),
             vacation_days: special_days.vacation_days,
             sick_days: special_days.sick_days,
-            vacation_day_hours,
-            sick_day_hours,
+            vacation_day_target_hours,
+            vacation_day_credit_hours,
+            sick_day_target_hours,
+            sick_day_credit_hours,
             credit_vacation_days_as_worked,
             credit_sick_days_as_worked,
             last_refresh: None,
@@ -1163,7 +1174,10 @@ impl App {
                 SettingsItem::RoundingMode => {
                     self.cycle_rounding_mode(true);
                 }
-                SettingsItem::VacationDayHours | SettingsItem::SickDayHours => {}
+                SettingsItem::VacationTargetHours
+                | SettingsItem::VacationCreditHours
+                | SettingsItem::SickTargetHours
+                | SettingsItem::SickCreditHours => {}
                 _ => {}
             },
             KeyCode::Down => match item {
@@ -1193,13 +1207,18 @@ impl App {
                 SettingsItem::RoundingMode => {
                     self.cycle_rounding_mode(false);
                 }
-                SettingsItem::VacationDayHours | SettingsItem::SickDayHours => {}
+                SettingsItem::VacationTargetHours
+                | SettingsItem::VacationCreditHours
+                | SettingsItem::SickTargetHours
+                | SettingsItem::SickCreditHours => {}
                 _ => {}
             },
             KeyCode::Backspace => match item {
                 SettingsItem::TargetHours
-                | SettingsItem::VacationDayHours
-                | SettingsItem::SickDayHours
+                | SettingsItem::VacationTargetHours
+                | SettingsItem::VacationCreditHours
+                | SettingsItem::SickTargetHours
+                | SettingsItem::SickCreditHours
                 | SettingsItem::TogglToken => {
                     self.settings_input.pop();
                 }
@@ -1227,7 +1246,10 @@ impl App {
                         self.settings_input.push(ch);
                     }
                 }
-                SettingsItem::VacationDayHours | SettingsItem::SickDayHours => {
+                SettingsItem::VacationTargetHours
+                | SettingsItem::VacationCreditHours
+                | SettingsItem::SickTargetHours
+                | SettingsItem::SickCreditHours => {
                     if ch.is_ascii_digit() {
                         self.settings_input.push(ch);
                         return;
@@ -1349,8 +1371,10 @@ impl App {
                 SettingsItem::RollupsWeekStart,
                 SettingsItem::CreditVacationDays,
                 SettingsItem::CreditSickDays,
-                SettingsItem::VacationDayHours,
-                SettingsItem::SickDayHours,
+                SettingsItem::VacationTargetHours,
+                SettingsItem::VacationCreditHours,
+                SettingsItem::SickTargetHours,
+                SettingsItem::SickCreditHours,
             ],
             _ => vec![
                 SettingsItem::Theme,
@@ -1382,11 +1406,17 @@ impl App {
             SettingsItem::TargetHours => {
                 self.settings_input = format!("{:.2}", self.target_hours);
             }
-            SettingsItem::VacationDayHours => {
-                self.settings_input = format!("{:.2}", self.vacation_day_hours);
+            SettingsItem::VacationTargetHours => {
+                self.settings_input = format!("{:.2}", self.vacation_day_target_hours);
             }
-            SettingsItem::SickDayHours => {
-                self.settings_input = format!("{:.2}", self.sick_day_hours);
+            SettingsItem::VacationCreditHours => {
+                self.settings_input = format!("{:.2}", self.vacation_day_credit_hours);
+            }
+            SettingsItem::SickTargetHours => {
+                self.settings_input = format!("{:.2}", self.sick_day_target_hours);
+            }
+            SettingsItem::SickCreditHours => {
+                self.settings_input = format!("{:.2}", self.sick_day_credit_hours);
             }
             SettingsItem::RollupsIncludeWeekends => {
                 self.settings_rollups_include_weekends_draft = self.rollups_include_weekends;
@@ -1500,41 +1530,79 @@ impl App {
                 self.settings_edit_item = None;
                 self.settings_focus = SettingsFocus::Items;
             }
-            SettingsItem::VacationDayHours => {
-                let parsed = match self.parse_hours_input("Vacation day hours", true) {
+            SettingsItem::VacationTargetHours => {
+                let parsed = match self.parse_hours_input("Vacation target hours", true) {
                     Ok(value) => value,
                     Err(message) => {
                         self.status = Some(message);
                         return;
                     }
                 };
-                if let Err(err) = storage::write_vacation_day_hours(parsed) {
+                if let Err(err) = storage::write_vacation_day_target_hours(parsed) {
                     self.status = Some(format!("Failed to save: {err}"));
                     return;
                 }
-                self.vacation_day_hours = parsed;
+                self.vacation_day_target_hours = parsed;
                 self.settings_input = format!("{:.2}", parsed);
-                self.status = Some("Vacation day hours updated.".to_string());
-                self.set_toast("Vacation day hours saved.", false);
+                self.status = Some("Vacation target hours updated.".to_string());
+                self.set_toast("Vacation target hours saved.", false);
                 self.settings_edit_item = None;
                 self.settings_focus = SettingsFocus::Items;
             }
-            SettingsItem::SickDayHours => {
-                let parsed = match self.parse_hours_input("Sick day hours", true) {
+            SettingsItem::VacationCreditHours => {
+                let parsed = match self.parse_hours_input("Vacation credit hours", true) {
                     Ok(value) => value,
                     Err(message) => {
                         self.status = Some(message);
                         return;
                     }
                 };
-                if let Err(err) = storage::write_sick_day_hours(parsed) {
+                if let Err(err) = storage::write_vacation_day_credit_hours(parsed) {
                     self.status = Some(format!("Failed to save: {err}"));
                     return;
                 }
-                self.sick_day_hours = parsed;
+                self.vacation_day_credit_hours = parsed;
                 self.settings_input = format!("{:.2}", parsed);
-                self.status = Some("Sick day hours updated.".to_string());
-                self.set_toast("Sick day hours saved.", false);
+                self.status = Some("Vacation credit hours updated.".to_string());
+                self.set_toast("Vacation credit hours saved.", false);
+                self.settings_edit_item = None;
+                self.settings_focus = SettingsFocus::Items;
+            }
+            SettingsItem::SickTargetHours => {
+                let parsed = match self.parse_hours_input("Sick target hours", true) {
+                    Ok(value) => value,
+                    Err(message) => {
+                        self.status = Some(message);
+                        return;
+                    }
+                };
+                if let Err(err) = storage::write_sick_day_target_hours(parsed) {
+                    self.status = Some(format!("Failed to save: {err}"));
+                    return;
+                }
+                self.sick_day_target_hours = parsed;
+                self.settings_input = format!("{:.2}", parsed);
+                self.status = Some("Sick target hours updated.".to_string());
+                self.set_toast("Sick target hours saved.", false);
+                self.settings_edit_item = None;
+                self.settings_focus = SettingsFocus::Items;
+            }
+            SettingsItem::SickCreditHours => {
+                let parsed = match self.parse_hours_input("Sick credit hours", true) {
+                    Ok(value) => value,
+                    Err(message) => {
+                        self.status = Some(message);
+                        return;
+                    }
+                };
+                if let Err(err) = storage::write_sick_day_credit_hours(parsed) {
+                    self.status = Some(format!("Failed to save: {err}"));
+                    return;
+                }
+                self.sick_day_credit_hours = parsed;
+                self.settings_input = format!("{:.2}", parsed);
+                self.status = Some("Sick credit hours updated.".to_string());
+                self.set_toast("Sick credit hours saved.", false);
                 self.settings_edit_item = None;
                 self.settings_focus = SettingsFocus::Items;
             }
@@ -1815,26 +1883,48 @@ impl App {
         }
     }
 
-    pub fn settings_vacation_day_hours_display(&self) -> f64 {
+    pub fn settings_vacation_target_hours_display(&self) -> f64 {
         if self.settings_focus == SettingsFocus::Edit
-            && self.settings_edit_item == Some(SettingsItem::VacationDayHours)
+            && self.settings_edit_item == Some(SettingsItem::VacationTargetHours)
         {
             return self
-                .parse_hours_input("Vacation day hours", true)
-                .unwrap_or(self.vacation_day_hours);
+                .parse_hours_input("Vacation target hours", true)
+                .unwrap_or(self.vacation_day_target_hours);
         }
-        self.vacation_day_hours
+        self.vacation_day_target_hours
     }
 
-    pub fn settings_sick_day_hours_display(&self) -> f64 {
+    pub fn settings_vacation_credit_hours_display(&self) -> f64 {
         if self.settings_focus == SettingsFocus::Edit
-            && self.settings_edit_item == Some(SettingsItem::SickDayHours)
+            && self.settings_edit_item == Some(SettingsItem::VacationCreditHours)
         {
             return self
-                .parse_hours_input("Sick day hours", true)
-                .unwrap_or(self.sick_day_hours);
+                .parse_hours_input("Vacation credit hours", true)
+                .unwrap_or(self.vacation_day_credit_hours);
         }
-        self.sick_day_hours
+        self.vacation_day_credit_hours
+    }
+
+    pub fn settings_sick_target_hours_display(&self) -> f64 {
+        if self.settings_focus == SettingsFocus::Edit
+            && self.settings_edit_item == Some(SettingsItem::SickTargetHours)
+        {
+            return self
+                .parse_hours_input("Sick target hours", true)
+                .unwrap_or(self.sick_day_target_hours);
+        }
+        self.sick_day_target_hours
+    }
+
+    pub fn settings_sick_credit_hours_display(&self) -> f64 {
+        if self.settings_focus == SettingsFocus::Edit
+            && self.settings_edit_item == Some(SettingsItem::SickCreditHours)
+        {
+            return self
+                .parse_hours_input("Sick credit hours", true)
+                .unwrap_or(self.sick_day_credit_hours);
+        }
+        self.sick_day_credit_hours
     }
 
     pub fn settings_rollups_include_weekends_display(&self) -> bool {
@@ -2293,8 +2383,8 @@ impl App {
             format!("Removed vacation day on {date}.")
         } else {
             format!(
-                "Marked {date} as vacation day ({:.2}h target).",
-                self.vacation_day_hours
+                "Marked {date} as vacation day ({:.2}h target, {:.2}h credit).",
+                self.vacation_day_target_hours, self.vacation_day_credit_hours
             )
         };
         self.status = Some(message.clone());
@@ -2322,8 +2412,8 @@ impl App {
             format!("Removed sick day on {date}.")
         } else {
             format!(
-                "Marked {date} as sick day ({:.2}h target).",
-                self.sick_day_hours
+                "Marked {date} as sick day ({:.2}h target, {:.2}h credit).",
+                self.sick_day_target_hours, self.sick_day_credit_hours
             )
         };
         self.status = Some(message.clone());
@@ -2558,12 +2648,20 @@ impl App {
         self.sick_days.contains(&day)
     }
 
-    pub fn vacation_day_hours(&self) -> f64 {
-        self.vacation_day_hours
+    pub fn vacation_day_target_hours(&self) -> f64 {
+        self.vacation_day_target_hours
     }
 
-    pub fn sick_day_hours(&self) -> f64 {
-        self.sick_day_hours
+    pub fn vacation_day_credit_hours(&self) -> f64 {
+        self.vacation_day_credit_hours
+    }
+
+    pub fn sick_day_target_hours(&self) -> f64 {
+        self.sick_day_target_hours
+    }
+
+    pub fn sick_day_credit_hours(&self) -> f64 {
+        self.sick_day_credit_hours
     }
 
     pub fn credit_vacation_days_as_worked(&self) -> bool {
