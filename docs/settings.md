@@ -12,7 +12,7 @@ Settings are organized into categories (left column) and items (right column).
 
 **Items (right)**
 - `Up/Down`: Select item
-- `Enter`: Edit item
+- `Enter`: Edit item or open action items
 - `Esc`: Back to categories
 
 **Editing**
@@ -21,7 +21,9 @@ Settings are organized into categories (left column) and items (right column).
 
 ## General
 - **Theme**  
-  Built-in presets include `Terminal`, `Midnight`, `Snow`, `Tokyo Night`, `Dracula`, `Catppuccin`, and `Cyberpunk`.
+  Bundled presets include `Terminal`, `Midnight`, `Snow`, `Tokyo Night`, `Dracula`, `Catppuccin`, and `Cyberpunk`. Theme cycling also includes saved custom themes.
+- **Theme Studio**
+  Opens the browser-based theme editor. It launches at `http://timeshit.studio.localhost:<random-port>/` on a random free loopback port and saves custom themes locally in `~/.toggl2tsc.json`.
 - **Target hours**  
   Used to color the footer total (green if met, red if below).
 - **Time rounding** (Off/On)  
@@ -64,3 +66,7 @@ Settings are stored in:
 ```
 ~/.toggl2tsc.json
 ```
+
+Custom theme validation:
+- names are trimmed, required, unique case-insensitively, and capped at 48 characters
+- palette values must use `#RRGGBB`
