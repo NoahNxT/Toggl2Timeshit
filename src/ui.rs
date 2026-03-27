@@ -685,13 +685,9 @@ fn draw_update_popup(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
     frame.render_widget(Clear, block);
 
     let action = if app.update_installable {
-        if app.update_release_page_opened {
-            "Press u to install now. The latest release page was opened in your browser."
-        } else {
-            "Press u to install now."
-        }
-    } else if app.update_release_page_opened {
-        "The latest release page was opened in your browser."
+        "Press u to install now."
+    } else if update::is_direct_install() {
+        "Press u to open the latest GitHub release."
     } else {
         "Please update to the latest version."
     };
@@ -720,7 +716,13 @@ fn draw_update_popup(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
 
     lines.push(Line::from(""));
     lines.push(Line::from(action));
-    lines.push(Line::from("Enter or Esc dismiss"));
+    lines.push(Line::from(
+        if app.update_installable || update::is_direct_install() {
+            "Press u, or Enter/Esc dismiss"
+        } else {
+            "Enter or Esc dismiss"
+        },
+    ));
 
     let paragraph = Paragraph::new(lines)
         .alignment(Alignment::Left)

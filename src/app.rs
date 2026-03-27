@@ -150,7 +150,6 @@ pub struct App {
     pub update_info: Option<UpdateInfo>,
     pub update_error: Option<String>,
     pub update_installable: bool,
-    pub update_release_page_opened: bool,
     show_update_popup: bool,
     pub rounding: Option<RoundingConfig>,
     token_hash: Option<String>,
@@ -275,7 +274,6 @@ impl App {
             update_info: None,
             update_error: None,
             update_installable: false,
-            update_release_page_opened: false,
             show_update_popup: false,
             rounding,
             token_hash,
@@ -376,11 +374,6 @@ impl App {
             Ok(Some(info)) => {
                 let is_direct_install = update::is_direct_install();
                 self.update_installable = is_direct_install && info.has_download();
-                self.update_release_page_opened = if is_direct_install {
-                    update::open_release_page(&info.changelog_url).is_ok()
-                } else {
-                    false
-                };
                 let message = if self.update_installable {
                     format!("Update available: v{} (press u to update)", info.latest)
                 } else {
@@ -394,11 +387,9 @@ impl App {
             Ok(None) => {
                 self.update_info = None;
                 self.update_installable = false;
-                self.update_release_page_opened = false;
                 self.show_update_popup = false;
             }
             Err(err) => {
-                self.update_release_page_opened = false;
                 self.show_update_popup = false;
                 let message = format!("Update check failed: {err}");
                 self.status = Some(message.clone());
@@ -723,11 +714,6 @@ impl App {
     }
 
     fn notify_update_install_unavailable(&mut self) {
-        if self.update_release_page_opened {
-            self.set_toast("The latest GitHub release is open in your browser.", false);
-            return;
-        }
-
         if update::is_direct_install()
             && let Some(url) = self
                 .update_info
@@ -735,7 +721,6 @@ impl App {
                 .map(|info| info.changelog_url.clone())
             && update::open_release_page(&url).is_ok()
         {
-            self.update_release_page_opened = true;
             self.set_toast("Opened the latest GitHub release in your browser.", false);
             return;
         }
