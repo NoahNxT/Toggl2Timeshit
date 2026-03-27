@@ -209,8 +209,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.prepare.outputs.release_tag }}
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+      - name: Install Theme Studio dependencies
+        working-directory: theme-studio
+        run: bun install --frozen-lockfile
+      - name: Build Theme Studio
+        working-directory: theme-studio
+        run: bun run build
       - name: Build release
         run: cargo build --release
       - name: Install zip (Windows)

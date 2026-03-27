@@ -13,12 +13,14 @@ use crate::app::{
 };
 use crate::rollups::WeekStart;
 use crate::rollups::{DailyTotal, PeriodRollup};
-use crate::storage::ThemePreference;
+use crate::theme::{
+    CustomTheme, ThemePalette, ThemePreference, ThemeSelection, theme_selection_label,
+};
 use crate::update;
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let size = frame.area();
-    let theme = theme_from(app.theme);
+    let theme = theme_from(&app.theme, app.custom_themes());
     draw_background(frame, size, &theme);
     if matches!(app.mode, Mode::Rollups | Mode::RefetchConfirm) {
         draw_rollups(frame, app, size, &theme);
@@ -543,6 +545,8 @@ fn rollups_footer_line(app: &mut App, theme: &Theme) -> Line<'static> {
         Span::raw(" · "),
         Span::styled("j sick day", theme.muted_style()),
         Span::raw(" · "),
+        Span::styled("g studio", theme.muted_style()),
+        Span::raw(" · "),
         Span::styled("R refetch scope", theme.muted_style()),
         Span::raw(" · "),
         Span::styled("h help", theme.muted_style()),
@@ -655,6 +659,8 @@ fn footer_line(app: &mut App, theme: &Theme) -> Line<'static> {
         Span::styled("j sick day", theme.muted_style()),
         Span::raw(" · "),
         Span::styled("s settings", theme.muted_style()),
+        Span::raw(" · "),
+        Span::styled("g studio", theme.muted_style()),
         Span::raw(" · "),
         Span::styled("q quit", theme.muted_style()),
         if status.is_empty() {
@@ -1827,8 +1833,12 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
             Cell::from("Settings"),
         ]),
         Row::new(vec![
+            Cell::from(Span::styled("g", key_style)),
+            Cell::from("Open theme studio"),
+        ]),
+        Row::new(vec![
             Cell::from(Span::styled("m", key_style)),
-            Cell::from("Toggle theme"),
+            Cell::from("Cycle themes"),
         ]),
         Row::new(vec![
             Cell::from(Span::styled("h / Esc", key_style)),
@@ -1915,8 +1925,13 @@ fn draw_settings(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
             let (label, value, disabled) = match item {
                 SettingsItem::Theme => {
                     let theme = app.settings_theme_display();
-                    ("Theme", theme_label(theme).to_string(), false)
+                    (
+                        "Theme",
+                        theme_selection_label(&theme, app.custom_themes()),
+                        false,
+                    )
                 }
+                SettingsItem::ThemeStudio => ("Theme Studio", "Open browser".to_string(), false),
                 SettingsItem::TargetHours => {
                     let value = if is_editing && editing_item == Some(SettingsItem::TargetHours) {
                         app.settings_input_value().to_string()
@@ -2067,7 +2082,13 @@ fn draw_settings(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
 
     let hint_text = match app.settings_focus() {
         SettingsFocus::Categories => "Enter items • Esc close",
-        SettingsFocus::Items => "Up/Down select • Enter edit • Esc categories",
+        SettingsFocus::Items => {
+            if app.selected_setting_item() == Some(SettingsItem::ThemeStudio) {
+                "Up/Down select • Enter open • Esc categories"
+            } else {
+                "Up/Down select • Enter edit • Esc categories"
+            }
+        }
         SettingsFocus::Edit => match editing_item {
             Some(SettingsItem::TargetHours)
             | Some(SettingsItem::VacationTargetHours)
@@ -2083,6 +2104,7 @@ fn draw_settings(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
             Some(SettingsItem::TimeRoundingToggle)
             | Some(SettingsItem::RoundingIncrement)
             | Some(SettingsItem::RoundingMode) => "Up/Down change • Enter save • Esc cancel",
+            Some(SettingsItem::ThemeStudio) => "Enter open • Esc cancel",
             None => "Esc cancel",
         },
     };
@@ -2107,7 +2129,7 @@ fn draw_settings(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
 }
 
 fn draw_background(frame: &mut Frame, area: Rect, theme: &Theme) {
-    let block = Block::default().style(Style::default().bg(theme.bg).fg(theme.text));
+    let block = Block::default().style(theme.panel_style());
     frame.render_widget(block, area);
 }
 
@@ -2146,7 +2168,6 @@ fn mask_token(token: &str) -> String {
 
 #[derive(Clone, Copy)]
 struct Theme {
-    bg: Color,
     panel: Color,
     border: Color,
     text: Color,
@@ -2155,7 +2176,6 @@ struct Theme {
     highlight: Color,
     success: Color,
     error: Color,
-    accent_dark: Color,
 }
 
 impl Theme {
@@ -2178,18 +2198,36 @@ impl Theme {
     }
 
     fn accent_contrast(&self) -> Color {
-        if matches!(self.bg, Color::Rgb(242, 244, 248)) {
-            self.accent_dark
+        if accent_is_dark(self.accent) {
+            Color::White
         } else {
             Color::Black
         }
     }
 }
 
-fn theme_from(pref: ThemePreference) -> Theme {
+fn accent_is_dark(color: Color) -> bool {
+    match color {
+        Color::Black | Color::Blue | Color::Red | Color::Magenta | Color::DarkGray => true,
+        Color::Indexed(index) => index < 8,
+        Color::Rgb(r, g, b) => {
+            (0.299 * f32::from(r) + 0.587 * f32::from(g) + 0.114 * f32::from(b)) < 150.0
+        }
+        _ => false,
+    }
+}
+
+fn theme_from(selection: &ThemeSelection, custom_themes: &[CustomTheme]) -> Theme {
+    match selection {
+        ThemeSelection::Builtin { theme } => builtin_theme(*theme),
+        ThemeSelection::Custom { id } => find_custom_theme_runtime(custom_themes, id)
+            .unwrap_or_else(|| builtin_theme(ThemePreference::Terminal)),
+    }
+}
+
+fn builtin_theme(pref: ThemePreference) -> Theme {
     match pref {
         ThemePreference::Terminal => Theme {
-            bg: Color::Reset,
             panel: Color::Reset,
             border: Color::DarkGray,
             text: Color::Reset,
@@ -2198,10 +2236,8 @@ fn theme_from(pref: ThemePreference) -> Theme {
             highlight: Color::Yellow,
             success: Color::Green,
             error: Color::Red,
-            accent_dark: Color::Black,
         },
         ThemePreference::Dark => Theme {
-            bg: Color::Rgb(12, 18, 36),
             panel: Color::Rgb(18, 28, 52),
             border: Color::Rgb(44, 72, 112),
             text: Color::Rgb(220, 230, 255),
@@ -2210,10 +2246,8 @@ fn theme_from(pref: ThemePreference) -> Theme {
             highlight: Color::Rgb(255, 210, 120),
             success: Color::Rgb(120, 220, 140),
             error: Color::Rgb(255, 120, 120),
-            accent_dark: Color::Rgb(26, 60, 110),
         },
         ThemePreference::Light => Theme {
-            bg: Color::Rgb(242, 244, 248),
             panel: Color::Rgb(255, 255, 255),
             border: Color::Rgb(210, 220, 235),
             text: Color::Rgb(26, 32, 44),
@@ -2222,17 +2256,79 @@ fn theme_from(pref: ThemePreference) -> Theme {
             highlight: Color::Rgb(255, 165, 80),
             success: Color::Rgb(36, 150, 90),
             error: Color::Rgb(220, 60, 80),
-            accent_dark: Color::Rgb(18, 34, 64),
+        },
+        ThemePreference::TokyoNight => Theme {
+            panel: Color::Rgb(26, 27, 38),
+            border: Color::Rgb(65, 72, 104),
+            text: Color::Rgb(192, 202, 245),
+            muted: Color::Rgb(125, 132, 173),
+            accent: Color::Rgb(125, 207, 255),
+            highlight: Color::Rgb(255, 158, 100),
+            success: Color::Rgb(158, 206, 106),
+            error: Color::Rgb(247, 118, 142),
+        },
+        ThemePreference::Dracula => Theme {
+            panel: Color::Rgb(40, 42, 54),
+            border: Color::Rgb(98, 114, 164),
+            text: Color::Rgb(248, 248, 242),
+            muted: Color::Rgb(189, 147, 249),
+            accent: Color::Rgb(255, 121, 198),
+            highlight: Color::Rgb(139, 233, 253),
+            success: Color::Rgb(80, 250, 123),
+            error: Color::Rgb(255, 85, 85),
+        },
+        ThemePreference::Catppuccin => Theme {
+            panel: Color::Rgb(30, 30, 46),
+            border: Color::Rgb(88, 91, 112),
+            text: Color::Rgb(205, 214, 244),
+            muted: Color::Rgb(166, 173, 200),
+            accent: Color::Rgb(203, 166, 247),
+            highlight: Color::Rgb(249, 226, 175),
+            success: Color::Rgb(166, 227, 161),
+            error: Color::Rgb(243, 139, 168),
+        },
+        ThemePreference::Cyberpunk => Theme {
+            panel: Color::Rgb(21, 10, 38),
+            border: Color::Rgb(118, 55, 184),
+            text: Color::Rgb(232, 246, 255),
+            muted: Color::Rgb(132, 202, 255),
+            accent: Color::Rgb(0, 245, 255),
+            highlight: Color::Rgb(255, 89, 194),
+            success: Color::Rgb(111, 255, 177),
+            error: Color::Rgb(255, 96, 141),
         },
     }
 }
 
-fn theme_label(theme: ThemePreference) -> &'static str {
-    match theme {
-        ThemePreference::Terminal => "Terminal",
-        ThemePreference::Dark => "Midnight",
-        ThemePreference::Light => "Snow",
+fn find_custom_theme_runtime(custom_themes: &[CustomTheme], id: &str) -> Option<Theme> {
+    custom_themes
+        .iter()
+        .find(|theme| theme.id == id)
+        .and_then(|theme| theme_from_palette(&theme.palette))
+}
+
+fn theme_from_palette(palette: &ThemePalette) -> Option<Theme> {
+    Some(Theme {
+        panel: parse_hex_color(&palette.panel)?,
+        border: parse_hex_color(&palette.border)?,
+        text: parse_hex_color(&palette.text)?,
+        muted: parse_hex_color(&palette.muted)?,
+        accent: parse_hex_color(&palette.accent)?,
+        highlight: parse_hex_color(&palette.highlight)?,
+        success: parse_hex_color(&palette.success)?,
+        error: parse_hex_color(&palette.error)?,
+    })
+}
+
+fn parse_hex_color(value: &str) -> Option<Color> {
+    let value = value.trim().strip_prefix('#')?;
+    if value.len() != 6 {
+        return None;
     }
+    let red = u8::from_str_radix(&value[0..2], 16).ok()?;
+    let green = u8::from_str_radix(&value[2..4], 16).ok()?;
+    let blue = u8::from_str_radix(&value[4..6], 16).ok()?;
+    Some(Color::Rgb(red, green, blue))
 }
 
 #[cfg(test)]

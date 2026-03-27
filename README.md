@@ -8,7 +8,7 @@ Timeshit is a Rust-based Terminal UI (TUI) that turns Toggl Track time entries i
 - Rollups with signed overtime balances and special-day target/credit handling
 - Clipboard export for timesheet tools
 - Cache-first design to reduce Toggl API usage
-- Built-in settings (target hours, integrations, theme)
+- Built-in settings, seven bundled themes, and a browser-based theme studio for custom themes
 
 ## Screenshots
 ![Dashboard](docs/images/dashboard.png)
@@ -92,6 +92,10 @@ Release assets:
 
 ### Build from Source
 ```bash
+cd theme-studio
+bun install --frozen-lockfile
+bun run build
+cd ..
 cargo build --release
 ```
 Binary: `target/release/timeshit`
@@ -112,16 +116,25 @@ Token file: `~/.toggl2tsc`
 timeshit
 ```
 
+Open the theme studio directly:
+```bash
+timeshit --theme-studio
+```
+
 Date range selection is done inside the TUI (`d`).
 
 Rollups treat sick/vacation days with separate target hours and worked-credit hours. The rollup summary shows a single signed `Overtime` balance for the selected period.
 
+Theme Studio runs on a random local loopback port and opens in your browser at `http://timeshit.studio.localhost:<random-port>/`. Custom themes are saved locally in `~/.toggl2tsc.json`.
+
 ## Keybinds (core)
 - `h` help
+- `g` open theme studio
 - `c` copy client entries
 - `v` copy project entries
 - `x` copy entries with client + project
 - `d` set date range
+- `m` cycle available themes
 - `k` toggle vacation day for active day
 - `j` toggle sick day for active day
 - `y` yesterday

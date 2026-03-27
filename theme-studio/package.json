@@ -1,0 +1,21 @@
+{
+  "name": "timeshit-theme-studio",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host timeshit.studio.localhost",
+    "build": "vite build",
+    "check": "biome check .",
+    "format": "biome format --write ."
+  },
+  "dependencies": {
+    "svelte": "5.55.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.4.9",
+    "@sveltejs/vite-plugin-svelte": "7.0.0",
+    "@types/node": "25.5.0",
+    "typescript": "6.0.2",
+    "vite": "8.0.3"
+  }
+}

@@ -60,9 +60,19 @@ Total hours: 8.00h
 ## Help & Settings
 - `h`: Help modal
 - `s`: Settings modal
-- `m`: Toggle light/dark theme
+- `g`: Open Theme Studio in the browser
+- `m`: Cycle bundled and saved custom themes
 
-Settings → General includes optional **time rounding** (increment + mode).
+Settings → General includes:
+- **Theme** for cycling theme selection in-app
+- **Theme Studio** for the browser-based custom theme editor
+- optional **time rounding** (increment + mode)
+
+Theme Studio opens at `http://timeshit.studio.localhost:<random-port>/` using a random free loopback port. It never binds to LAN interfaces.
+
+## CLI
+- `timeshit`: Launch the TUI
+- `timeshit --theme-studio`: Open Theme Studio directly without entering the TUI first
 
 ## Status & Toasts
 Short status messages appear in the footer and auto-hide after a few seconds. Copy actions also show a small toast in the dashboard.
