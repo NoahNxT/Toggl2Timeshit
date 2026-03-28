@@ -9,6 +9,10 @@ This file is auto-updated by the release workflow.
 - 🐛 fix: calculate rollup overtime across the full selected period
 - ✨ feat: split special-day target hours from worked-credit hours in settings
 - 📝 docs: document signed overtime balances and special-day target/credit settings
+## v1.10.1 - 2026-03-28
+
+- ⬆️ bump aws-lc to patched security releases
+
 ## v1.10.0 - 2026-03-27
 
 - 👷 build theme studio in CI and stop tracking dist
