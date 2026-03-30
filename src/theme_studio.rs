@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::io;
-use std::net::{IpAddr, SocketAddr, TcpListener, ToSocketAddrs};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
@@ -221,10 +221,10 @@ fn wait_for_exit(shared: Arc<SharedRuntime>, finish_rx: mpsc::Receiver<()>) -> T
 }
 
 fn bind_theme_studio_listeners(host: &str) -> Result<Vec<TcpListener>, ThemeStudioError> {
-    let addresses = resolve_loopback_addresses(host)?;
+    let addresses = supported_loopback_addresses(resolve_loopback_addresses(host));
     let Some(primary_ip) = addresses.first().copied() else {
         return Err(ThemeStudioError::Bind(
-            "Theme studio hostname did not resolve to a loopback address.".to_string(),
+            "Theme studio could not find an available loopback address.".to_string(),
         ));
     };
 
@@ -259,48 +259,88 @@ fn bind_theme_studio_listeners(host: &str) -> Result<Vec<TcpListener>, ThemeStud
     ))
 }
 
-fn resolve_loopback_addresses(host: &str) -> Result<Vec<IpAddr>, ThemeStudioError> {
-    let addresses = format!("{host}:0")
-        .to_socket_addrs()
-        .map_err(|err| ThemeStudioError::Bind(err.to_string()))?;
+fn resolve_loopback_addresses(host: &str) -> Vec<IpAddr> {
     let mut ips = BTreeSet::new();
 
-    for address in addresses {
-        if address.ip().is_loopback() {
-            ips.insert(address.ip());
+    if let Ok(addresses) = format!("{host}:0").to_socket_addrs() {
+        for address in addresses {
+            if address.ip().is_loopback() {
+                ips.insert(address.ip());
+            }
         }
     }
 
-    Ok(ips.into_iter().collect())
+    if ips.is_empty() {
+        ips.extend(default_loopback_addresses());
+    }
+
+    ips.into_iter().collect()
+}
+
+fn default_loopback_addresses() -> [IpAddr; 2] {
+    [
+        IpAddr::V4(Ipv4Addr::LOCALHOST),
+        IpAddr::V6(Ipv6Addr::LOCALHOST),
+    ]
+}
+
+fn supported_loopback_addresses(addresses: Vec<IpAddr>) -> Vec<IpAddr> {
+    let mut supported = Vec::new();
+
+    for ip in addresses {
+        if let Ok(listener) = TcpListener::bind(SocketAddr::new(ip, 0)) {
+            supported.push(ip);
+            drop(listener);
+        }
+    }
+
+    supported
 }
 
 fn open_browser(url: &str) -> Result<(), ThemeStudioError> {
-    let mut command = match std::env::consts::OS {
-        "macos" => {
-            let mut command = std::process::Command::new("open");
-            command.arg(url);
-            command
-        }
-        "windows" => {
-            let mut command = std::process::Command::new("cmd");
-            command.args(["/C", "start", "", url]);
-            command
-        }
-        _ => {
-            let mut command = std::process::Command::new("xdg-open");
-            command.arg(url);
-            command
-        }
+    let candidates = match std::env::consts::OS {
+        "macos" => vec![("open", vec![url])],
+        "windows" => vec![("cmd", vec!["/C", "start", "", url])],
+        _ if is_wsl() => vec![
+            ("wslview", vec![url]),
+            ("cmd.exe", vec!["/C", "start", "", url]),
+            ("xdg-open", vec![url]),
+        ],
+        _ => vec![("xdg-open", vec![url])],
     };
 
+    let mut last_error = None;
+    for (program, args) in candidates {
+        match spawn_browser_command(program, &args) {
+            Ok(()) => return Ok(()),
+            Err(err) => last_error = Some(err.to_string()),
+        }
+    }
+
+    let message = last_error.unwrap_or_else(|| "Could not open a local browser.".to_string());
+    return Err(ThemeStudioError::Browser(message));
+}
+
+fn spawn_browser_command(program: &str, args: &[&str]) -> Result<(), io::Error> {
+    let mut command = std::process::Command::new(program);
+    command.args(args);
     command
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
-        .spawn()
-        .map_err(|err| ThemeStudioError::Browser(err.to_string()))?;
+        .spawn()?;
 
     Ok(())
+}
+
+fn is_wsl() -> bool {
+    if std::env::var_os("WSL_DISTRO_NAME").is_some() || std::env::var_os("WSL_INTEROP").is_some() {
+        return true;
+    }
+
+    std::fs::read_to_string("/proc/sys/kernel/osrelease")
+        .map(|contents| contents.to_ascii_lowercase().contains("microsoft"))
+        .unwrap_or(false)
 }
 
 fn handle_http_request(mut request: Request, store: &dyn ThemeStore) -> bool {
@@ -624,6 +664,14 @@ mod tests {
         assert!(!listeners.is_empty());
         let port = listeners[0].local_addr().unwrap().port();
         assert!(port > 0);
+    }
+
+    #[test]
+    fn invalid_hostname_falls_back_to_local_loopback_addresses() {
+        let addresses = resolve_loopback_addresses("theme-studio.invalid");
+        assert!(!addresses.is_empty());
+        assert!(addresses.iter().all(IpAddr::is_loopback));
+        assert!(addresses.contains(&IpAddr::V4(Ipv4Addr::LOCALHOST)));
     }
 
     #[test]
