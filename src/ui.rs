@@ -219,23 +219,49 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
                     app.sick_days(),
                     special_day_hours,
                 );
-                let (target, _) = period_target_hours(
+                let (target, _) = period_contract_target_hours(
                     period,
                     app.target_hours,
                     app.rollups_include_weekends,
-                    app.vacation_days(),
-                    app.sick_days(),
-                    special_day_hours,
                 );
-                let overtime = normalize_delta(hours - target);
-                let overtime_style = delta_style(overtime, theme);
+                let balance = normalize_delta(hours - target);
+                let recup_progress = recup_progress(
+                    balance,
+                    app.recup_hours_required(),
+                    app.recup_threshold_days(),
+                );
+                let display_delta =
+                    rollup_list_delta_hours(app.rollup_view, balance, recup_progress);
+                let overtime_style = delta_style(display_delta, theme);
                 let missing_days = app.rollup_period_missing_days(period);
                 let mut spans = vec![
                     Span::styled(&period.label, Style::default().add_modifier(Modifier::BOLD)),
                     Span::raw("  "),
                     Span::styled(format!("{:.2}h", hours), theme.muted_style()),
-                    Span::styled(format!("  {:+.2}h", overtime), overtime_style),
+                    Span::styled(format!("  {:+.2}h", display_delta), overtime_style),
                 ];
+                if matches!(app.rollup_view, RollupView::Monthly) {
+                    let (status_symbol, status_style) = if recup_progress
+                        .as_ref()
+                        .is_some_and(|progress| progress.threshold_met)
+                    {
+                        (
+                            "✓",
+                            Style::default()
+                                .fg(theme.success)
+                                .add_modifier(Modifier::BOLD),
+                        )
+                    } else {
+                        (
+                            "x",
+                            Style::default()
+                                .fg(theme.error)
+                                .add_modifier(Modifier::BOLD),
+                        )
+                    };
+                    spans.push(Span::raw("  "));
+                    spans.push(Span::styled(status_symbol, status_style));
+                }
                 if missing_days > 0 {
                     spans.push(Span::raw("  "));
                     spans.push(Span::styled(
@@ -289,7 +315,7 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
 
     let right_sections = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(9), Constraint::Min(0)])
+        .constraints([Constraint::Length(11), Constraint::Min(0)])
         .split(body[1]);
 
     let daily = app.rollup_daily_for_selected_period();
@@ -308,15 +334,9 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
             app.sick_days(),
             special_day_hours,
         );
-        let (target_hours, target_days) = period_target_hours(
-            period,
-            app.target_hours,
-            app.rollups_include_weekends,
-            app.vacation_days(),
-            app.sick_days(),
-            special_day_hours,
-        );
-        let overtime = period_overtime_hours(
+        let (target_hours, target_days) =
+            period_contract_target_hours(period, app.target_hours, app.rollups_include_weekends);
+        let balance_hours = period_contract_balance_hours(
             period,
             &app.rollups.daily,
             app.target_hours,
@@ -349,13 +369,17 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
                 Style::default().add_modifier(Modifier::BOLD),
             )),
             Line::from(format!("Total: {:.2}h", total_hours)),
+            Line::from(format!("Base day: {:.2}h", app.target_hours)),
             Line::from(format!(
-                "Target: {:.2}h ({} target days)",
+                "Contract: {:.2}h ({} target days)",
                 target_hours, target_days
             )),
             Line::from(vec![
-                Span::raw("Overtime: "),
-                Span::styled(format!("{:+.2}h", overtime), delta_style(overtime, theme)),
+                Span::raw("Balance: "),
+                Span::styled(
+                    format!("{:+.2}h", balance_hours),
+                    delta_style(balance_hours, theme),
+                ),
             ]),
             Line::from(format!("Avg/day (worked): {:.2}h", avg)),
             if missing_days == 0 {
@@ -373,6 +397,62 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
             },
         ];
 
+        if matches!(app.rollup_view, RollupView::Monthly) {
+            if let Some(progress) = recup_progress(
+                balance_hours,
+                app.recup_hours_required(),
+                app.recup_threshold_days(),
+            ) {
+                lines.insert(
+                    5,
+                    Line::from(Span::styled(
+                        format!(
+                            "Recup rule: threshold is {} / +{:.2}h balance",
+                            format_recup_days(progress.threshold_days),
+                            progress.threshold_hours
+                        ),
+                        theme.muted_style(),
+                    )),
+                );
+                let recup_line = if progress.threshold_met {
+                    Line::from(vec![
+                        Span::raw("Recup: "),
+                        Span::styled(
+                            format!(
+                                "threshold reached ({}/{})",
+                                progress.reached_days, progress.threshold_days
+                            ),
+                            Style::default()
+                                .fg(theme.success)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::raw(format!(", {:+.2}h carry", progress.carry_hours)),
+                    ])
+                } else {
+                    Line::from(vec![
+                        Span::raw("Recup: "),
+                        Span::styled(
+                            format!(
+                                "{}/{} {} reached",
+                                progress.reached_days,
+                                progress.threshold_days,
+                                if progress.threshold_days == 1 {
+                                    "day"
+                                } else {
+                                    "days"
+                                }
+                            ),
+                            Style::default()
+                                .fg(theme.highlight)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::raw(format!(", need {:.2}h more", progress.hours_needed)),
+                    ])
+                };
+                lines.insert(6, recup_line);
+            }
+        }
+
         if let Some(day) = selected_day {
             let hours = effective_hours_for_day(
                 day.date,
@@ -383,13 +463,10 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
                 app.sick_days(),
                 special_day_hours,
             );
-            let day_target = target_hours_for_day(
+            let day_target = contract_target_hours_for_day(
                 day.date,
                 app.target_hours,
                 app.rollups_include_weekends,
-                app.vacation_days(),
-                app.sick_days(),
-                special_day_hours,
             );
             let day_delta = normalize_delta(hours - day_target);
             let label = day.date.format("%a %Y-%m-%d").to_string();
@@ -645,6 +722,11 @@ fn footer_line(app: &mut App, theme: &Theme) -> Line<'static> {
     let status = app.visible_status().unwrap_or_default();
     Line::from(vec![
         Span::styled(format!("Total {:.2}h", app.total_hours), total_style),
+        Span::raw(" / "),
+        Span::styled(
+            format!("Contract {:.2}h", app.target_hours),
+            theme.muted_style(),
+        ),
         Span::raw("   "),
         Span::styled("h help", theme.muted_style()),
         Span::raw(" · "),
@@ -1111,7 +1193,11 @@ fn effective_hours_for_day(
         sick_days,
         special_day_hours,
     );
-    worked_hours.max(credit)
+    if normalize_delta(worked_hours) > 0.0 {
+        worked_hours
+    } else {
+        credit
+    }
 }
 
 fn period_effective_hours(
@@ -1169,6 +1255,33 @@ fn period_target_hours(
     (total, days)
 }
 
+fn contract_target_hours_for_day(day: NaiveDate, target_hours: f64, include_weekends: bool) -> f64 {
+    if include_weekends || day.weekday().number_from_monday() <= 5 {
+        target_hours
+    } else {
+        0.0
+    }
+}
+
+fn period_contract_target_hours(
+    period: &PeriodRollup,
+    target_hours: f64,
+    include_weekends: bool,
+) -> (f64, usize) {
+    let mut days = 0usize;
+    let mut total = 0.0;
+    let mut current = period.start;
+    while current <= period.end {
+        let target = contract_target_hours_for_day(current, target_hours, include_weekends);
+        if target > 0.0 {
+            days += 1;
+        }
+        total += target;
+        current = current.succ_opt().unwrap_or(current + Duration::days(1));
+    }
+    (total, days)
+}
+
 fn period_overtime_hours(
     period: &PeriodRollup,
     daily: &[DailyTotal],
@@ -1197,6 +1310,30 @@ fn period_overtime_hours(
         sick_days,
         special_day_hours,
     );
+    normalize_delta(worked_total - target_total)
+}
+
+fn period_contract_balance_hours(
+    period: &PeriodRollup,
+    daily: &[DailyTotal],
+    target_hours: f64,
+    include_weekends: bool,
+    vacation_days: &HashSet<NaiveDate>,
+    sick_days: &HashSet<NaiveDate>,
+    special_day_hours: SpecialDayHours,
+    credit_vacation_days_as_worked: bool,
+    credit_sick_days_as_worked: bool,
+) -> f64 {
+    let worked_total = period_effective_hours(
+        period,
+        daily,
+        credit_vacation_days_as_worked,
+        credit_sick_days_as_worked,
+        vacation_days,
+        sick_days,
+        special_day_hours,
+    );
+    let (target_total, _) = period_contract_target_hours(period, target_hours, include_weekends);
     normalize_delta(worked_total - target_total)
 }
 
@@ -1234,6 +1371,76 @@ fn period_worked_totals_until(
                 (worked_hours, worked_days)
             }
         })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct RecupProgress {
+    threshold_met: bool,
+    threshold_days: u32,
+    threshold_hours: f64,
+    reached_days: u32,
+    carry_hours: f64,
+    hours_needed: f64,
+}
+
+fn recup_progress(
+    balance_hours: f64,
+    recup_hours_required: f64,
+    recup_threshold_days: u32,
+) -> Option<RecupProgress> {
+    if recup_hours_required <= 0.0 || recup_threshold_days == 0 {
+        return None;
+    }
+
+    let threshold_hours = recup_hours_required * recup_threshold_days as f64;
+    let reached_days = if balance_hours > 0.0 {
+        ((balance_hours / recup_hours_required).floor() as u32).min(recup_threshold_days)
+    } else {
+        0
+    };
+
+    if balance_hours <= 0.0 {
+        return Some(RecupProgress {
+            threshold_met: false,
+            threshold_days: recup_threshold_days,
+            threshold_hours,
+            reached_days,
+            carry_hours: 0.0,
+            hours_needed: normalize_delta(threshold_hours - balance_hours),
+        });
+    }
+
+    Some(RecupProgress {
+        threshold_met: balance_hours >= threshold_hours,
+        threshold_days: recup_threshold_days,
+        threshold_hours,
+        reached_days,
+        carry_hours: normalize_delta((balance_hours - threshold_hours).max(0.0)),
+        hours_needed: normalize_delta((threshold_hours - balance_hours).max(0.0)),
+    })
+}
+
+fn format_recup_days(count: u32) -> String {
+    if count == 1 {
+        "1 day".to_string()
+    } else {
+        format!("{count} days")
+    }
+}
+
+fn rollup_list_delta_hours(
+    rollup_view: RollupView,
+    balance_hours: f64,
+    progress: Option<RecupProgress>,
+) -> f64 {
+    if matches!(rollup_view, RollupView::Monthly)
+        && let Some(progress) = progress
+        && progress.threshold_met
+    {
+        return progress.carry_hours;
+    }
+
+    balance_hours
 }
 
 fn target_hours_for_day(
@@ -1460,14 +1667,7 @@ fn build_period_calendar_grid_lines(
                     );
                     let delta = normalize_delta(
                         hours
-                            - target_hours_for_day(
-                                *date,
-                                target_hours,
-                                include_weekends,
-                                vacation_days,
-                                sick_days,
-                                special_day_hours,
-                            ),
+                            - contract_target_hours_for_day(*date, target_hours, include_weekends),
                     );
                     let mut style = if is_fetched {
                         delta_style(delta, theme).add_modifier(Modifier::BOLD)
@@ -1938,7 +2138,28 @@ fn draw_settings(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
                     } else {
                         format!("{:.2}h", app.target_hours)
                     };
-                    ("Target hours", value, false)
+                    ("Contract hours/day", value, false)
+                }
+                SettingsItem::RecupHoursRequired => {
+                    let value =
+                        if is_editing && editing_item == Some(SettingsItem::RecupHoursRequired) {
+                            app.settings_input_value().to_string()
+                        } else {
+                            format!("{:.2}h", app.settings_recup_hours_required_display())
+                        };
+                    ("Hours per recup day", value, false)
+                }
+                SettingsItem::RecupThresholdDays => {
+                    let value =
+                        if is_editing && editing_item == Some(SettingsItem::RecupThresholdDays) {
+                            app.settings_input_value().to_string()
+                        } else {
+                            format!(
+                                "{}",
+                                format_recup_days(app.settings_recup_threshold_days_display())
+                            )
+                        };
+                    ("Recup threshold", value, false)
                 }
                 SettingsItem::VacationTargetHours => {
                     let value =
@@ -2091,6 +2312,8 @@ fn draw_settings(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
         }
         SettingsFocus::Edit => match editing_item {
             Some(SettingsItem::TargetHours)
+            | Some(SettingsItem::RecupHoursRequired)
+            | Some(SettingsItem::RecupThresholdDays)
             | Some(SettingsItem::VacationTargetHours)
             | Some(SettingsItem::VacationCreditHours)
             | Some(SettingsItem::SickTargetHours)
@@ -2361,6 +2584,149 @@ mod tests {
             (actual - expected).abs() < 0.000_1,
             "expected {expected:.4}, got {actual:.4}"
         );
+    }
+
+    #[test]
+    fn recup_progress_reports_hours_after_first_recup_day() {
+        let progress = recup_progress(20.45, 8.0, 1).unwrap();
+
+        assert!(progress.threshold_met);
+        assert_eq!(progress.threshold_days, 1);
+        assert_eq!(progress.reached_days, 1);
+        approx_eq(progress.threshold_hours, 8.0);
+        approx_eq(progress.carry_hours, 12.45);
+        approx_eq(progress.hours_needed, 0.0);
+    }
+
+    #[test]
+    fn recup_progress_shows_full_gap_when_balance_is_negative() {
+        let progress = recup_progress(-1.25, 8.0, 1).unwrap();
+
+        assert!(!progress.threshold_met);
+        approx_eq(progress.carry_hours, 0.0);
+        approx_eq(progress.hours_needed, 9.25);
+    }
+
+    #[test]
+    fn monthly_list_delta_shows_balance_after_configured_recup_threshold() {
+        let one_day = recup_progress(20.45, 8.0, 1);
+        let two_day = recup_progress(20.45, 8.0, 2);
+        let three_day = recup_progress(20.45, 8.0, 3);
+
+        approx_eq(
+            rollup_list_delta_hours(RollupView::Monthly, 20.45, one_day),
+            12.45,
+        );
+        approx_eq(
+            rollup_list_delta_hours(RollupView::Monthly, 20.45, two_day),
+            4.45,
+        );
+        approx_eq(
+            rollup_list_delta_hours(RollupView::Monthly, 20.45, three_day),
+            20.45,
+        );
+        approx_eq(
+            rollup_list_delta_hours(RollupView::Weekly, 20.45, one_day),
+            20.45,
+        );
+    }
+
+    #[test]
+    fn contract_balance_uses_contract_day_even_on_sick_days() {
+        let period = march_2026_period();
+        let daily = vec![
+            daily_total(2026, 3, 2, 0.0),
+            daily_total(2026, 3, 3, 0.0),
+            daily_total(2026, 3, 4, 0.0),
+            daily_total(2026, 3, 5, 0.0),
+            daily_total(2026, 3, 6, 10.5),
+            daily_total(2026, 3, 9, 14.0),
+            daily_total(2026, 3, 10, 10.25),
+            daily_total(2026, 3, 11, 9.5),
+            daily_total(2026, 3, 12, 8.0),
+            daily_total(2026, 3, 13, 10.0),
+            daily_total(2026, 3, 16, 11.75),
+            daily_total(2026, 3, 17, 6.0),
+            daily_total(2026, 3, 18, 8.75),
+            daily_total(2026, 3, 19, 10.25),
+            daily_total(2026, 3, 20, 10.0),
+            daily_total(2026, 3, 23, 9.25),
+            daily_total(2026, 3, 24, 7.0),
+            daily_total(2026, 3, 25, 7.0),
+            daily_total(2026, 3, 26, 11.5),
+            daily_total(2026, 3, 27, 4.0),
+            daily_total(2026, 3, 30, 4.25),
+            daily_total(2026, 3, 31, 5.25),
+        ];
+        let vacation_days = HashSet::new();
+        let sick_days = HashSet::from([
+            date(2026, 3, 2),
+            date(2026, 3, 3),
+            date(2026, 3, 4),
+            date(2026, 3, 5),
+            date(2026, 3, 31),
+        ]);
+        let special_day_hours = SpecialDayHours {
+            vacation_target_hours: 8.0,
+            vacation_credit_hours: 7.6,
+            sick_target_hours: 8.0,
+            sick_credit_hours: 7.6,
+        };
+
+        let total = period_effective_hours(
+            &period,
+            &daily,
+            false,
+            true,
+            &vacation_days,
+            &sick_days,
+            special_day_hours,
+        );
+        let (contract_target, target_days) = period_contract_target_hours(&period, 7.6, false);
+        let balance = period_contract_balance_hours(
+            &period,
+            &daily,
+            7.6,
+            false,
+            &vacation_days,
+            &sick_days,
+            special_day_hours,
+            false,
+            true,
+        );
+        let recup = recup_progress(balance, 8.0, 1).unwrap();
+
+        approx_eq(total, 187.65);
+        approx_eq(contract_target, 167.2);
+        approx_eq(balance, 20.45);
+        assert_eq!(target_days, 22);
+        assert!(recup.threshold_met);
+        assert_eq!(recup.reached_days, 1);
+        approx_eq(recup.carry_hours, 12.45);
+    }
+
+    #[test]
+    fn partial_sick_day_keeps_logged_hours_instead_of_full_credit() {
+        let vacation_days = HashSet::new();
+        let sick_days = HashSet::from([date(2026, 3, 31)]);
+        let special_day_hours = SpecialDayHours {
+            vacation_target_hours: 8.0,
+            vacation_credit_hours: 7.6,
+            sick_target_hours: 8.0,
+            sick_credit_hours: 7.6,
+        };
+
+        let effective = effective_hours_for_day(
+            date(2026, 3, 31),
+            5.25,
+            false,
+            true,
+            &vacation_days,
+            &sick_days,
+            special_day_hours,
+        );
+
+        approx_eq(effective, 5.25);
     }
 
     #[test]

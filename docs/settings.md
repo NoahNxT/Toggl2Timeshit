@@ -24,8 +24,8 @@ Settings are organized into categories (left column) and items (right column).
   Bundled presets include `Terminal`, `Midnight`, `Snow`, `Tokyo Night`, `Dracula`, `Catppuccin`, and `Cyberpunk`. Theme cycling also includes saved custom themes.
 - **Theme Studio**
   Opens the browser-based theme editor. It launches at `http://timeshit.studio.localhost:<random-port>/` on a random free loopback port and saves custom themes locally in `~/.toggl2tsc.json`.
-- **Target hours**  
-  Used to color the footer total (green if met, red if below).
+- **Contract hours/day**  
+  Your normal contractual day. Used to color the footer total and as the default daily baseline in rollups.
 - **Time rounding** (Off/On)  
   Disabled by default. When disabled, rounding settings are removed from config.
 - **Rounding increment**  
@@ -41,6 +41,10 @@ Rounding is applied to each **grouped entry line** (per description). Project to
   Whether weekends are part of rollup targeting and navigation.
 - **Week start**  
   Monday or Sunday for weekly grouping/calendar.
+- **Hours per recup day**  
+  How many positive balance hours are needed before one recup day is earned in the monthly rollup summary.
+- **Recup threshold**  
+  How many recup days must be reached in a month before the month row shows a checkmark and switches to remaining carry hours.
 - **Credit vacation as worked**  
   If enabled, each vacation day contributes its configured vacation-day hours to worked totals.
 - **Credit sick as worked**  

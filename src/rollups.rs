@@ -244,7 +244,13 @@ mod tests {
     use super::*;
     use crate::rounding::{RoundingConfig, RoundingMode};
 
-    fn entry(id: u64, start: &str, duration: i64, description: &str, project_id: Option<u64>) -> TimeEntry {
+    fn entry(
+        id: u64,
+        start: &str,
+        duration: i64,
+        description: &str,
+        project_id: Option<u64>,
+    ) -> TimeEntry {
         TimeEntry {
             id,
             description: Some(description.to_string()),

@@ -45,6 +45,10 @@ pub struct QuotaFile {
 }
 
 const QUOTA_FILE_VERSION: u32 = 2;
+const DEFAULT_CONTRACT_HOURS: f64 = 7.6;
+const DEFAULT_RECUP_HOURS_REQUIRED: f64 = 8.0;
+const DEFAULT_RECUP_THRESHOLD_DAYS: u32 = 1;
+const HOURS_EPSILON: f64 = 0.0001;
 
 pub fn read_token() -> Option<String> {
     if let Ok(value) = env::var("TOGGL_API_TOKEN") {
@@ -107,45 +111,83 @@ impl From<io::Error> for ThemeConfigError {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
 struct Config {
     theme: Option<ThemePreference>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     active_theme: Option<ThemeSelection>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     custom_themes: Vec<CustomTheme>,
-    target_hours: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    contract_hours: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    recup_hours_required: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    recup_threshold_days: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     rounding: Option<RoundingConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     rollup_preferences: Option<RollupPreferences>,
-    // Backward-compatible legacy field; merged into vacation_days on read.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    non_working_days: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     vacation_days: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     sick_days: Vec<String>,
-    // Legacy field; used as fallback for both target and credit hours.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    vacation_day_hours: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     vacation_day_target_hours: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     vacation_day_credit_hours: Option<f64>,
-    // Legacy field; used as fallback for both target and credit hours.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    sick_day_hours: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     sick_day_target_hours: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     sick_day_credit_hours: Option<f64>,
-    // Legacy field; used as fallback for both specific toggles.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    credit_special_days_as_worked: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     credit_vacation_days_as_worked: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    credit_sick_days_as_worked: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct LegacyConfig {
+    theme: Option<ThemePreference>,
+    #[serde(default)]
+    active_theme: Option<ThemeSelection>,
+    #[serde(default)]
+    custom_themes: Vec<CustomTheme>,
+    #[serde(default)]
+    contract_hours: Option<f64>,
+    #[serde(default)]
+    target_hours: Option<f64>,
+    #[serde(default)]
+    recup_hours_required: Option<f64>,
+    #[serde(default)]
+    recup_threshold_days: Option<u32>,
+    #[serde(default)]
+    rounding: Option<RoundingConfig>,
+    #[serde(default)]
+    rollup_preferences: Option<RollupPreferences>,
+    #[serde(default)]
+    non_working_days: Vec<String>,
+    #[serde(default)]
+    vacation_days: Vec<String>,
+    #[serde(default)]
+    sick_days: Vec<String>,
+    #[serde(default)]
+    vacation_day_hours: Option<f64>,
+    #[serde(default)]
+    vacation_day_target_hours: Option<f64>,
+    #[serde(default)]
+    vacation_day_credit_hours: Option<f64>,
+    #[serde(default)]
+    sick_day_hours: Option<f64>,
+    #[serde(default)]
+    sick_day_target_hours: Option<f64>,
+    #[serde(default)]
+    sick_day_credit_hours: Option<f64>,
+    #[serde(default)]
+    credit_special_days_as_worked: Option<bool>,
+    #[serde(default)]
+    credit_vacation_days_as_worked: Option<bool>,
+    #[serde(default)]
     credit_sick_days_as_worked: Option<bool>,
 }
 
@@ -363,13 +405,150 @@ fn generate_custom_theme_id(name: &str, custom_themes: &[CustomTheme]) -> String
     format!("theme-{}", &hash_token(&format!("{name}|fallback"))[..12])
 }
 
+fn legacy_credit_hours(config: &LegacyConfig) -> Option<f64> {
+    config
+        .vacation_day_credit_hours
+        .or(config.vacation_day_hours)
+        .or(config.sick_day_credit_hours)
+        .or(config.sick_day_hours)
+}
+
+fn config_contract_hours(config: &Config) -> Option<f64> {
+    config.contract_hours.or(Some(DEFAULT_CONTRACT_HOURS))
+}
+
+fn migrate_config(legacy: LegacyConfig) -> Config {
+    let custom_themes = normalize_custom_themes(&legacy.custom_themes);
+    let builtin_theme = match legacy.active_theme.as_ref() {
+        Some(ThemeSelection::Builtin { theme }) => *theme,
+        _ => legacy.theme.unwrap_or(ThemePreference::Terminal),
+    };
+    let active_theme =
+        resolve_active_theme(legacy.active_theme.as_ref(), builtin_theme, &custom_themes);
+    let contract_hours = config_contract_hours_legacy(&legacy);
+    let recup_hours_required = config_recup_hours_required_legacy(&legacy);
+    let mut vacation_days = parse_day_list(&legacy.vacation_days);
+    vacation_days.extend(parse_day_list(&legacy.non_working_days));
+    let sick_days = parse_day_list(&legacy.sick_days);
+    for day in &sick_days {
+        vacation_days.remove(day);
+    }
+    let credit_default = legacy
+        .credit_special_days_as_worked
+        .unwrap_or(default_credit_special_days_as_worked());
+
+    Config {
+        theme: Some(builtin_theme),
+        active_theme: Some(active_theme),
+        custom_themes,
+        contract_hours: Some(contract_hours),
+        recup_hours_required: Some(recup_hours_required),
+        recup_threshold_days: Some(config_recup_threshold_days_legacy(&legacy)),
+        rounding: legacy.rounding,
+        rollup_preferences: legacy.rollup_preferences,
+        vacation_days: format_day_list(&vacation_days),
+        sick_days: format_day_list(&sick_days),
+        vacation_day_target_hours: Some(
+            legacy
+                .vacation_day_target_hours
+                .unwrap_or(recup_hours_required),
+        ),
+        vacation_day_credit_hours: Some(
+            legacy
+                .vacation_day_credit_hours
+                .or(legacy.vacation_day_hours)
+                .unwrap_or(contract_hours),
+        ),
+        sick_day_target_hours: Some(legacy.sick_day_target_hours.unwrap_or(recup_hours_required)),
+        sick_day_credit_hours: Some(
+            legacy
+                .sick_day_credit_hours
+                .or(legacy.sick_day_hours)
+                .unwrap_or(contract_hours),
+        ),
+        credit_vacation_days_as_worked: Some(
+            legacy
+                .credit_vacation_days_as_worked
+                .unwrap_or(credit_default),
+        ),
+        credit_sick_days_as_worked: Some(
+            legacy.credit_sick_days_as_worked.unwrap_or(credit_default),
+        ),
+    }
+}
+
+fn config_recup_hours_required(config: &Config) -> f64 {
+    config
+        .recup_hours_required
+        .unwrap_or(DEFAULT_RECUP_HOURS_REQUIRED)
+}
+
+fn config_recup_threshold_days(config: &Config) -> u32 {
+    config
+        .recup_threshold_days
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_RECUP_THRESHOLD_DAYS)
+}
+
+fn config_contract_hours_legacy(legacy: &LegacyConfig) -> f64 {
+    legacy
+        .contract_hours
+        .or_else(|| legacy_credit_hours(legacy))
+        .or_else(|| {
+            legacy.target_hours.and_then(|value| {
+                ((value - DEFAULT_RECUP_HOURS_REQUIRED).abs() > HOURS_EPSILON).then_some(value)
+            })
+        })
+        .unwrap_or(DEFAULT_CONTRACT_HOURS)
+}
+
+fn config_recup_hours_required_legacy(legacy: &LegacyConfig) -> f64 {
+    legacy.recup_hours_required.unwrap_or_else(|| {
+        legacy
+            .target_hours
+            .filter(|value| (value - config_contract_hours_legacy(legacy)).abs() > HOURS_EPSILON)
+            .unwrap_or(DEFAULT_RECUP_HOURS_REQUIRED)
+    })
+}
+
+fn config_recup_threshold_days_legacy(legacy: &LegacyConfig) -> u32 {
+    legacy
+        .recup_threshold_days
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_RECUP_THRESHOLD_DAYS)
+}
+
 pub fn read_target_hours() -> Option<f64> {
-    read_config().and_then(|config| config.target_hours)
+    read_config().and_then(|config| config_contract_hours(&config))
 }
 
 pub fn write_target_hours(value: f64) -> Result<(), io::Error> {
     let mut config = read_config().unwrap_or_default();
-    config.target_hours = Some(value);
+    config.contract_hours = Some(value);
+    write_config(&config)
+}
+
+pub fn read_recup_hours_required() -> f64 {
+    read_config()
+        .map(|config| config_recup_hours_required(&config))
+        .unwrap_or(DEFAULT_RECUP_HOURS_REQUIRED)
+}
+
+pub fn write_recup_hours_required(value: f64) -> Result<(), io::Error> {
+    let mut config = read_config().unwrap_or_default();
+    config.recup_hours_required = Some(value);
+    write_config(&config)
+}
+
+pub fn read_recup_threshold_days() -> u32 {
+    read_config()
+        .map(|config| config_recup_threshold_days(&config))
+        .unwrap_or(DEFAULT_RECUP_THRESHOLD_DAYS)
+}
+
+pub fn write_recup_threshold_days(value: u32) -> Result<(), io::Error> {
+    let mut config = read_config().unwrap_or_default();
+    config.recup_threshold_days = Some(value.max(1));
     write_config(&config)
 }
 
@@ -407,8 +586,6 @@ pub fn read_special_days() -> SpecialDays {
     };
 
     let mut vacation_days = parse_day_list(&config.vacation_days);
-    // Migrate legacy "non_working_days" to vacation days.
-    vacation_days.extend(parse_day_list(&config.non_working_days));
     let sick_days = parse_day_list(&config.sick_days);
 
     for day in &sick_days {
@@ -428,27 +605,23 @@ pub fn write_special_days(
     let mut config = read_config().unwrap_or_default();
     config.vacation_days = format_day_list(vacation_days);
     config.sick_days = format_day_list(sick_days);
-    // Keep legacy field in sync for backward compatibility.
-    config.non_working_days = config.vacation_days.clone();
     write_config(&config)
 }
 
 fn config_vacation_day_target_hours(config: &Config) -> Option<f64> {
-    config.vacation_day_target_hours.or(config.target_hours)
+    config.vacation_day_target_hours
 }
 
 fn config_vacation_day_credit_hours(config: &Config) -> Option<f64> {
-    config
-        .vacation_day_credit_hours
-        .or(config.vacation_day_hours)
+    config.vacation_day_credit_hours
 }
 
 fn config_sick_day_target_hours(config: &Config) -> Option<f64> {
-    config.sick_day_target_hours.or(config.target_hours)
+    config.sick_day_target_hours
 }
 
 fn config_sick_day_credit_hours(config: &Config) -> Option<f64> {
-    config.sick_day_credit_hours.or(config.sick_day_hours)
+    config.sick_day_credit_hours
 }
 
 pub fn read_vacation_day_target_hours() -> Option<f64> {
@@ -496,8 +669,7 @@ pub fn read_credit_vacation_days_as_worked() -> bool {
     let Some(config) = read_config() else {
         return default;
     };
-    let fallback = config.credit_special_days_as_worked.unwrap_or(default);
-    config.credit_vacation_days_as_worked.unwrap_or(fallback)
+    config.credit_vacation_days_as_worked.unwrap_or(default)
 }
 
 pub fn write_credit_vacation_days_as_worked(value: bool) -> Result<(), io::Error> {
@@ -511,8 +683,7 @@ pub fn read_credit_sick_days_as_worked() -> bool {
     let Some(config) = read_config() else {
         return default;
     };
-    let fallback = config.credit_special_days_as_worked.unwrap_or(default);
-    config.credit_sick_days_as_worked.unwrap_or(fallback)
+    config.credit_sick_days_as_worked.unwrap_or(default)
 }
 
 pub fn write_credit_sick_days_as_worked(value: bool) -> Result<(), io::Error> {
@@ -550,7 +721,13 @@ fn write_config(config: &Config) -> Result<(), io::Error> {
 
 fn read_config_from_path(path: &Path) -> Option<Config> {
     let contents = fs::read_to_string(path).ok()?;
-    serde_json::from_str(&contents).ok()
+    let legacy: LegacyConfig = serde_json::from_str(&contents).ok()?;
+    let config = migrate_config(legacy);
+    let normalized_json = serde_json::to_string_pretty(&config).ok()?;
+    if contents != normalized_json {
+        let _ = fs::write(path, &normalized_json);
+    }
+    Some(config)
 }
 
 fn write_config_to_path(path: &Path, config: &Config) -> Result<(), io::Error> {
@@ -718,31 +895,28 @@ mod tests {
 
     #[test]
     fn read_special_days_merges_legacy_non_working() {
-        let config = Config {
+        let config = migrate_config(LegacyConfig {
             vacation_days: vec!["2026-02-10".to_string()],
             sick_days: vec!["2026-02-11".to_string()],
             non_working_days: vec!["2026-02-12".to_string()],
-            ..Config::default()
-        };
-        let mut vacation_days = parse_day_list(&config.vacation_days);
-        vacation_days.extend(parse_day_list(&config.non_working_days));
+            ..LegacyConfig::default()
+        });
+        let vacation_days = parse_day_list(&config.vacation_days);
         let sick_days = parse_day_list(&config.sick_days);
-        for day in &sick_days {
-            vacation_days.remove(day);
-        }
         assert!(vacation_days.contains(&NaiveDate::from_ymd_opt(2026, 2, 10).unwrap()));
         assert!(vacation_days.contains(&NaiveDate::from_ymd_opt(2026, 2, 12).unwrap()));
+        assert!(!vacation_days.contains(&NaiveDate::from_ymd_opt(2026, 2, 11).unwrap()));
         assert!(sick_days.contains(&NaiveDate::from_ymd_opt(2026, 2, 11).unwrap()));
     }
 
     #[test]
     fn legacy_special_day_hours_map_to_credit_and_normal_target_defaults() {
-        let config = Config {
+        let config = migrate_config(LegacyConfig {
             target_hours: Some(8.0),
             vacation_day_hours: Some(7.6),
             sick_day_hours: Some(6.8),
-            ..Config::default()
-        };
+            ..LegacyConfig::default()
+        });
 
         assert_eq!(config_vacation_day_target_hours(&config), Some(8.0));
         assert_eq!(config_vacation_day_credit_hours(&config), Some(7.6));
@@ -751,16 +925,70 @@ mod tests {
     }
 
     #[test]
+    fn contract_hours_prefers_new_field_and_falls_back_to_legacy_target() {
+        let legacy = LegacyConfig {
+            target_hours: Some(7.6),
+            ..LegacyConfig::default()
+        };
+        let explicit = LegacyConfig {
+            contract_hours: Some(7.4),
+            target_hours: Some(8.0),
+            ..LegacyConfig::default()
+        };
+
+        assert_eq!(config_contract_hours_legacy(&legacy), 7.6);
+        assert_eq!(config_contract_hours_legacy(&explicit), 7.4);
+    }
+
+    #[test]
+    fn legacy_default_target_hours_maps_to_recup_rule_for_upgraders() {
+        let config = migrate_config(LegacyConfig {
+            target_hours: Some(8.0),
+            vacation_day_credit_hours: Some(7.6),
+            sick_day_credit_hours: Some(7.6),
+            ..LegacyConfig::default()
+        });
+
+        assert_eq!(config_contract_hours(&config), Some(7.6));
+        assert_eq!(config_recup_hours_required(&config), 8.0);
+        assert_eq!(config_recup_threshold_days(&config), 1);
+        assert_eq!(config_vacation_day_target_hours(&config), Some(8.0));
+        assert_eq!(config_sick_day_target_hours(&config), Some(8.0));
+    }
+
+    #[test]
+    fn legacy_matching_target_hours_keep_default_recup_rule() {
+        let config = migrate_config(LegacyConfig {
+            target_hours: Some(7.6),
+            ..LegacyConfig::default()
+        });
+
+        assert_eq!(config_contract_hours(&config), Some(7.6));
+        assert_eq!(config_recup_hours_required(&config), 8.0);
+        assert_eq!(config_recup_threshold_days(&config), 1);
+    }
+
+    #[test]
+    fn explicit_recup_threshold_days_are_preserved() {
+        let config = migrate_config(LegacyConfig {
+            recup_threshold_days: Some(3),
+            ..LegacyConfig::default()
+        });
+
+        assert_eq!(config_recup_threshold_days(&config), 3);
+    }
+
+    #[test]
     fn explicit_special_day_target_and_credit_hours_override_legacy_values() {
-        let config = Config {
+        let config = migrate_config(LegacyConfig {
             vacation_day_hours: Some(7.6),
             vacation_day_target_hours: Some(8.0),
             vacation_day_credit_hours: Some(7.2),
             sick_day_hours: Some(7.6),
             sick_day_target_hours: Some(8.0),
             sick_day_credit_hours: Some(7.4),
-            ..Config::default()
-        };
+            ..LegacyConfig::default()
+        });
 
         assert_eq!(config_vacation_day_target_hours(&config), Some(8.0));
         assert_eq!(config_vacation_day_credit_hours(&config), Some(7.2));
@@ -860,5 +1088,43 @@ mod tests {
             settings.active_theme,
             ThemeSelection::custom("theme-aurora")
         );
+    }
+
+    #[test]
+    fn read_config_rewrites_legacy_fields_out_of_user_config() {
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "timeshit-config-{}.json",
+            now_rfc3339().replace(':', "-")
+        ));
+        let legacy_json = r#"{
+  "theme": "dark",
+  "target_hours": 8.0,
+  "non_working_days": ["2026-02-12"],
+  "vacation_day_hours": 7.6,
+  "sick_day_hours": 7.6,
+  "credit_special_days_as_worked": true
+}"#;
+
+        fs::write(&path, legacy_json).unwrap();
+        let config = read_config_from_path(&path).unwrap();
+        let rewritten = fs::read_to_string(&path).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&rewritten).unwrap();
+
+        assert_eq!(config.contract_hours, Some(7.6));
+        assert_eq!(config.recup_hours_required, Some(8.0));
+        assert_eq!(config.recup_threshold_days, Some(1));
+        assert!(json.get("target_hours").is_none());
+        assert!(json.get("non_working_days").is_none());
+        assert!(json.get("vacation_day_hours").is_none());
+        assert!(json.get("sick_day_hours").is_none());
+        assert!(json.get("credit_special_days_as_worked").is_none());
+        assert_eq!(
+            json.get("recup_threshold_days")
+                .and_then(|value| value.as_u64()),
+            Some(1)
+        );
+
+        let _ = fs::remove_file(path);
     }
 }

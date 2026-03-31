@@ -88,6 +88,8 @@ pub enum SettingsItem {
     Theme,
     ThemeStudio,
     TargetHours,
+    RecupHoursRequired,
+    RecupThresholdDays,
     VacationTargetHours,
     VacationCreditHours,
     SickTargetHours,
@@ -156,6 +158,8 @@ pub struct App {
     pub show_help: bool,
     pub theme: ThemeSelection,
     pub target_hours: f64,
+    recup_hours_required: f64,
+    recup_threshold_days: u32,
     pub update_info: Option<UpdateInfo>,
     pub update_installable: bool,
     show_update_popup: bool,
@@ -206,17 +210,19 @@ impl App {
         };
         let theme_settings = storage::read_theme_settings();
         let theme = theme_settings.active_theme.clone();
-        let target_hours = storage::read_target_hours().unwrap_or(8.0);
+        let target_hours = storage::read_target_hours().unwrap_or(7.6);
+        let recup_hours_required = storage::read_recup_hours_required();
+        let recup_threshold_days = storage::read_recup_threshold_days();
         let rounding = storage::read_rounding();
         let rollup_preferences = storage::read_rollup_preferences();
         let special_days = storage::read_special_days();
         let vacation_day_target_hours =
-            storage::read_vacation_day_target_hours().unwrap_or(target_hours);
+            storage::read_vacation_day_target_hours().unwrap_or(recup_hours_required);
         let vacation_day_credit_hours =
-            storage::read_vacation_day_credit_hours().unwrap_or(vacation_day_target_hours);
-        let sick_day_target_hours = storage::read_sick_day_target_hours().unwrap_or(target_hours);
-        let sick_day_credit_hours =
-            storage::read_sick_day_credit_hours().unwrap_or(sick_day_target_hours);
+            storage::read_vacation_day_credit_hours().unwrap_or(target_hours);
+        let sick_day_target_hours =
+            storage::read_sick_day_target_hours().unwrap_or(recup_hours_required);
+        let sick_day_credit_hours = storage::read_sick_day_credit_hours().unwrap_or(target_hours);
         let credit_vacation_days_as_worked = storage::read_credit_vacation_days_as_worked();
         let credit_sick_days_as_worked = storage::read_credit_sick_days_as_worked();
         let token_hash = token.as_ref().map(|value| storage::hash_token(value));
@@ -280,6 +286,8 @@ impl App {
             show_help: false,
             theme: theme.clone(),
             target_hours,
+            recup_hours_required,
+            recup_threshold_days,
             update_info: None,
             update_installable: false,
             show_update_popup: false,
@@ -1138,7 +1146,9 @@ impl App {
                 SettingsItem::RoundingMode => {
                     self.cycle_rounding_mode(true);
                 }
-                SettingsItem::VacationTargetHours
+                SettingsItem::RecupHoursRequired
+                | SettingsItem::RecupThresholdDays
+                | SettingsItem::VacationTargetHours
                 | SettingsItem::VacationCreditHours
                 | SettingsItem::SickTargetHours
                 | SettingsItem::SickCreditHours => {}
@@ -1171,7 +1181,9 @@ impl App {
                 SettingsItem::RoundingMode => {
                     self.cycle_rounding_mode(false);
                 }
-                SettingsItem::VacationTargetHours
+                SettingsItem::RecupHoursRequired
+                | SettingsItem::RecupThresholdDays
+                | SettingsItem::VacationTargetHours
                 | SettingsItem::VacationCreditHours
                 | SettingsItem::SickTargetHours
                 | SettingsItem::SickCreditHours => {}
@@ -1179,6 +1191,8 @@ impl App {
             },
             KeyCode::Backspace => match item {
                 SettingsItem::TargetHours
+                | SettingsItem::RecupHoursRequired
+                | SettingsItem::RecupThresholdDays
                 | SettingsItem::VacationTargetHours
                 | SettingsItem::VacationCreditHours
                 | SettingsItem::SickTargetHours
@@ -1195,7 +1209,7 @@ impl App {
                         self.settings_input.push(ch);
                     }
                 }
-                SettingsItem::TargetHours => {
+                SettingsItem::TargetHours | SettingsItem::RecupHoursRequired => {
                     if ch.is_ascii_digit() {
                         self.settings_input.push(ch);
                         return;
@@ -1207,6 +1221,11 @@ impl App {
                         if self.settings_input.contains('.') || self.settings_input.contains(',') {
                             return;
                         }
+                        self.settings_input.push(ch);
+                    }
+                }
+                SettingsItem::RecupThresholdDays => {
+                    if ch.is_ascii_digit() {
                         self.settings_input.push(ch);
                     }
                 }
@@ -1281,7 +1300,26 @@ impl App {
     }
 
     fn parse_target_hours(&self) -> Result<f64, String> {
-        self.parse_hours_input("Target hours", false)
+        self.parse_hours_input("Contract hours/day", false)
+    }
+
+    fn parse_positive_count_input(&self, label: &str, max: u32) -> Result<u32, String> {
+        let value = self.settings_input.trim();
+        if value.is_empty() {
+            return Err(format!("{label} is required."));
+        }
+
+        let parsed = value
+            .parse::<u32>()
+            .map_err(|_| format!("{label} must be a whole number."))?;
+        if parsed == 0 {
+            return Err(format!("{label} must be at least 1."));
+        }
+        if parsed > max {
+            return Err(format!("{label} must be {max} or less."));
+        }
+
+        Ok(parsed)
     }
 
     fn rebuild_grouped(&mut self) {
@@ -1333,6 +1371,8 @@ impl App {
             "Rollups" => vec![
                 SettingsItem::RollupsIncludeWeekends,
                 SettingsItem::RollupsWeekStart,
+                SettingsItem::RecupHoursRequired,
+                SettingsItem::RecupThresholdDays,
                 SettingsItem::CreditVacationDays,
                 SettingsItem::CreditSickDays,
                 SettingsItem::VacationTargetHours,
@@ -1374,6 +1414,12 @@ impl App {
             }
             SettingsItem::TargetHours => {
                 self.settings_input = format!("{:.2}", self.target_hours);
+            }
+            SettingsItem::RecupHoursRequired => {
+                self.settings_input = format!("{:.2}", self.recup_hours_required);
+            }
+            SettingsItem::RecupThresholdDays => {
+                self.settings_input = self.recup_threshold_days.to_string();
             }
             SettingsItem::VacationTargetHours => {
                 self.settings_input = format!("{:.2}", self.vacation_day_target_hours);
@@ -1501,8 +1547,46 @@ impl App {
                 }
                 self.target_hours = parsed;
                 self.settings_input = format!("{:.2}", parsed);
-                self.status = Some("Target hours updated.".to_string());
-                self.set_toast("Target hours saved.", false);
+                self.status = Some("Contract hours updated.".to_string());
+                self.set_toast("Contract hours saved.", false);
+                self.settings_edit_item = None;
+                self.settings_focus = SettingsFocus::Items;
+            }
+            SettingsItem::RecupHoursRequired => {
+                let parsed = match self.parse_hours_input("Hours per recup day", true) {
+                    Ok(value) => value,
+                    Err(message) => {
+                        self.status = Some(message);
+                        return;
+                    }
+                };
+                if let Err(err) = storage::write_recup_hours_required(parsed) {
+                    self.status = Some(format!("Failed to save: {err}"));
+                    return;
+                }
+                self.recup_hours_required = parsed;
+                self.settings_input = format!("{:.2}", parsed);
+                self.status = Some("Recup rule updated.".to_string());
+                self.set_toast("Recup rule saved.", false);
+                self.settings_edit_item = None;
+                self.settings_focus = SettingsFocus::Items;
+            }
+            SettingsItem::RecupThresholdDays => {
+                let parsed = match self.parse_positive_count_input("Recup threshold days", 31) {
+                    Ok(value) => value,
+                    Err(message) => {
+                        self.status = Some(message);
+                        return;
+                    }
+                };
+                if let Err(err) = storage::write_recup_threshold_days(parsed) {
+                    self.status = Some(format!("Failed to save: {err}"));
+                    return;
+                }
+                self.recup_threshold_days = parsed;
+                self.settings_input = parsed.to_string();
+                self.status = Some("Recup threshold updated.".to_string());
+                self.set_toast("Recup threshold saved.", false);
                 self.settings_edit_item = None;
                 self.settings_focus = SettingsFocus::Items;
             }
@@ -1848,6 +1932,28 @@ impl App {
 
     pub fn custom_themes(&self) -> &[CustomTheme] {
         &self.custom_themes
+    }
+
+    pub fn settings_recup_hours_required_display(&self) -> f64 {
+        if self.settings_focus == SettingsFocus::Edit
+            && self.settings_edit_item == Some(SettingsItem::RecupHoursRequired)
+        {
+            return self
+                .parse_hours_input("Hours per recup day", true)
+                .unwrap_or(self.recup_hours_required);
+        }
+        self.recup_hours_required
+    }
+
+    pub fn settings_recup_threshold_days_display(&self) -> u32 {
+        if self.settings_focus == SettingsFocus::Edit
+            && self.settings_edit_item == Some(SettingsItem::RecupThresholdDays)
+        {
+            return self
+                .parse_positive_count_input("Recup threshold days", 31)
+                .unwrap_or(self.recup_threshold_days);
+        }
+        self.recup_threshold_days
     }
 
     pub fn settings_vacation_target_hours_display(&self) -> f64 {
@@ -2629,6 +2735,14 @@ impl App {
 
     pub fn sick_day_credit_hours(&self) -> f64 {
         self.sick_day_credit_hours
+    }
+
+    pub fn recup_hours_required(&self) -> f64 {
+        self.recup_hours_required
+    }
+
+    pub fn recup_threshold_days(&self) -> u32 {
+        self.recup_threshold_days
     }
 
     pub fn credit_vacation_days_as_worked(&self) -> bool {
