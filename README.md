@@ -156,6 +156,24 @@ Theme Studio runs on a random local loopback port and opens in your browser at `
 ## Docs
 Full documentation lives in `docs/` and is published via GitHub Pages.
 
+## Testing And Coverage
+Run the test suite locally with:
+```bash
+cargo test
+```
+
+Generate a local coverage summary and HTML report with:
+```bash
+rustup component add llvm-tools-preview
+cargo install cargo-llvm-cov --locked
+mkdir -p target/llvm-cov
+cargo llvm-cov --no-report
+cargo llvm-cov report --json --summary-only --output-path target/llvm-cov/summary.json
+cargo llvm-cov report --html --output-dir target/llvm-cov
+```
+
+CI now publishes the coverage report as a GitHub Actions artifact named `coverage-report`.
+
 ## Project
 - Changelog: `CHANGELOG.md`
 - Contributing: `CONTRIBUTING.md`

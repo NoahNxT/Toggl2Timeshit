@@ -1,0 +1,95 @@
+name: ✅ CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - bug/**
+      - codex/**
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-14, windows-2022]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run tests
+        run: cargo test
+
+  coverage:
+    name: Coverage Report
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov --locked
+
+      - name: Generate coverage artifacts
+        run: |
+          mkdir -p target/llvm-cov
+          cargo llvm-cov --no-report
+          cargo llvm-cov report --json --summary-only --output-path target/llvm-cov/summary.json
+          cargo llvm-cov report --lcov --output-path target/llvm-cov/lcov.info
+          cargo llvm-cov report --html --output-dir target/llvm-cov
+
+      - name: Write job summary
+        shell: bash
+        run: |
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          from pathlib import Path
+
+          summary = json.loads(Path("target/llvm-cov/summary.json").read_text())
+          data = summary["data"][0]["totals"]
+
+          def pct(key):
+              count = data[key]["count"]
+              covered = data[key]["covered"]
+              if count == 0:
+                  return "n/a"
+              return f"{(covered / count) * 100:.2f}%"
+
+          print("## Coverage")
+          print("")
+          print("| Metric | Covered | Total | Coverage |")
+          print("| --- | ---: | ---: | ---: |")
+          print(f"| Lines | {data['lines']['covered']} | {data['lines']['count']} | {pct('lines')} |")
+          print(f"| Functions | {data['functions']['covered']} | {data['functions']['count']} | {pct('functions')} |")
+          print(f"| Regions | {data['regions']['covered']} | {data['regions']['count']} | {pct('regions')} |")
+          PY
+
+      - name: Upload coverage artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: |
+            target/llvm-cov/summary.json
+            target/llvm-cov/lcov.info
+            target/llvm-cov/html
