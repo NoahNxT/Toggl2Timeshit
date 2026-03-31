@@ -44,6 +44,7 @@ pub fn build_rollups(
     week_start: WeekStart,
 ) -> Rollups {
     let mut totals: HashMap<NaiveDate, i64> = HashMap::new();
+    let mut grouped: HashMap<(NaiveDate, Option<u64>, String), i64> = HashMap::new();
 
     for entry in entries {
         let Some(date) = parse_entry_date(entry) else {
@@ -52,10 +53,20 @@ pub fn build_rollups(
         if date < start || date > end {
             continue;
         }
-        let duration = rounding
-            .map(|cfg| round_seconds(entry.duration, cfg))
-            .unwrap_or(entry.duration);
-        *totals.entry(date).or_insert(0) += duration;
+        let description = entry
+            .description
+            .clone()
+            .unwrap_or_else(|| "No description".to_string());
+        *grouped
+            .entry((date, entry.project_id, description))
+            .or_insert(0) += entry.duration;
+    }
+
+    for ((date, _, _), duration) in grouped {
+        let rounded_duration = rounding
+            .map(|cfg| round_seconds(duration, cfg))
+            .unwrap_or(duration);
+        *totals.entry(date).or_insert(0) += rounded_duration;
     }
 
     let daily = build_daily_totals(&totals, start, end);
@@ -233,22 +244,22 @@ mod tests {
     use super::*;
     use crate::rounding::{RoundingConfig, RoundingMode};
 
-    fn entry(start: &str, duration: i64) -> TimeEntry {
+    fn entry(id: u64, start: &str, duration: i64, description: &str, project_id: Option<u64>) -> TimeEntry {
         TimeEntry {
-            id: 1,
-            description: Some("Test".to_string()),
+            id,
+            description: Some(description.to_string()),
             duration,
             start: start.to_string(),
             stop: Some(start.to_string()),
-            project_id: None,
+            project_id,
         }
     }
 
     #[test]
     fn build_rollups_includes_empty_days() {
         let entries = vec![
-            entry("2026-02-03T10:00:00Z", 3600),
-            entry("2026-02-04T10:00:00Z", 1800),
+            entry(1, "2026-02-03T10:00:00Z", 3600, "Test", None),
+            entry(2, "2026-02-04T10:00:00Z", 1800, "Test", None),
         ];
         let start = NaiveDate::from_ymd_opt(2026, 2, 3).unwrap();
         let end = NaiveDate::from_ymd_opt(2026, 2, 5).unwrap();
@@ -269,8 +280,28 @@ mod tests {
     #[test]
     fn build_rollups_respects_rounding() {
         let entries = vec![
-            entry("2026-02-03T10:00:00Z", 14 * 60),
-            entry("2026-02-03T11:00:00Z", 14 * 60),
+            entry(1, "2026-02-03T10:00:00Z", 14 * 60, "Ticket 1", None),
+            entry(2, "2026-02-03T11:00:00Z", 14 * 60, "Ticket 2", None),
+        ];
+        let start = NaiveDate::from_ymd_opt(2026, 2, 3).unwrap();
+        let end = NaiveDate::from_ymd_opt(2026, 2, 3).unwrap();
+        let rounding = RoundingConfig {
+            increment_minutes: 15,
+            mode: RoundingMode::Closest,
+        };
+
+        let rollups = build_rollups(&entries, start, end, Some(&rounding), WeekStart::Monday);
+
+        assert_eq!(rollups.daily.len(), 1);
+        assert_eq!(rollups.daily[0].seconds, 30 * 60);
+    }
+
+    #[test]
+    fn build_rollups_rounds_grouped_daily_lines_like_dashboard() {
+        let entries = vec![
+            entry(1, "2026-02-03T10:00:00Z", 8 * 60, "Ticket 1", Some(1)),
+            entry(2, "2026-02-03T11:00:00Z", 8 * 60, "Ticket 1", Some(1)),
+            entry(3, "2026-02-03T12:00:00Z", 8 * 60, "Ticket 2", Some(1)),
         ];
         let start = NaiveDate::from_ymd_opt(2026, 2, 3).unwrap();
         let end = NaiveDate::from_ymd_opt(2026, 2, 3).unwrap();
@@ -287,7 +318,7 @@ mod tests {
 
     #[test]
     fn weekly_rollups_respect_sunday_start() {
-        let entries = vec![entry("2026-02-01T10:00:00Z", 3600)];
+        let entries = vec![entry(1, "2026-02-01T10:00:00Z", 3600, "Test", None)];
         let start = NaiveDate::from_ymd_opt(2026, 2, 1).unwrap();
         let end = NaiveDate::from_ymd_opt(2026, 2, 2).unwrap();
 
@@ -301,8 +332,8 @@ mod tests {
     #[test]
     fn yearly_rollups_group_by_year() {
         let entries = vec![
-            entry("2025-12-31T10:00:00Z", 1800),
-            entry("2026-01-01T10:00:00Z", 3600),
+            entry(1, "2025-12-31T10:00:00Z", 1800, "Test", None),
+            entry(2, "2026-01-01T10:00:00Z", 3600, "Test", None),
         ];
         let start = NaiveDate::from_ymd_opt(2025, 12, 31).unwrap();
         let end = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
