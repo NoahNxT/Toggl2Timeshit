@@ -204,6 +204,11 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
         RollupView::Yearly => &app.rollups.yearly,
     };
 
+    let period_label_width = periods
+        .iter()
+        .map(|period| period.label.len())
+        .max()
+        .unwrap_or(0);
     let period_items: Vec<ListItem> = if periods.is_empty() {
         vec![ListItem::new(Line::from("No rollup data")).style(theme.panel_style())]
     } else {
@@ -234,42 +239,44 @@ fn draw_rollups(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
                     rollup_list_delta_hours(app.rollup_view, balance, recup_progress);
                 let overtime_style = delta_style(display_delta, theme);
                 let missing_days = app.rollup_period_missing_days(period);
+                let hours_text = format!("{:>8}", format!("{:.2}h", hours));
+                let delta_text = format!("{:>8}", format!("{:+.2}h", display_delta));
+                let label_text = format!("{:<width$}", period.label, width = period_label_width);
                 let mut spans = vec![
-                    Span::styled(&period.label, Style::default().add_modifier(Modifier::BOLD)),
+                    Span::styled(label_text, Style::default().add_modifier(Modifier::BOLD)),
                     Span::raw("  "),
-                    Span::styled(format!("{:.2}h", hours), theme.muted_style()),
-                    Span::styled(format!("  {:+.2}h", display_delta), overtime_style),
+                    Span::styled(hours_text, theme.muted_style()),
+                    Span::raw("  "),
+                    Span::styled(delta_text, overtime_style),
                 ];
                 if matches!(app.rollup_view, RollupView::Monthly) {
-                    let (status_symbol, status_style) = if recup_progress
+                    let status_style = if recup_progress
                         .as_ref()
                         .is_some_and(|progress| progress.threshold_met)
                     {
-                        (
-                            "✓",
-                            Style::default()
-                                .fg(theme.success)
-                                .add_modifier(Modifier::BOLD),
-                        )
+                        Style::default()
+                            .fg(theme.success)
+                            .add_modifier(Modifier::BOLD)
                     } else {
-                        (
-                            "x",
-                            Style::default()
-                                .fg(theme.error)
-                                .add_modifier(Modifier::BOLD),
-                        )
+                        Style::default()
+                            .fg(theme.error)
+                            .add_modifier(Modifier::BOLD)
                     };
+                    let status_text =
+                        format!("{:>5}", recup_progress_ratio_text(recup_progress.as_ref()));
                     spans.push(Span::raw("  "));
-                    spans.push(Span::styled(status_symbol, status_style));
+                    spans.push(Span::styled(status_text, status_style));
                 }
+                spans.push(Span::raw("  "));
                 if missing_days > 0 {
-                    spans.push(Span::raw("  "));
                     spans.push(Span::styled(
-                        format!("!{}d n/f", missing_days),
+                        format!("{:<9}", format!("!{}d n/f", missing_days)),
                         Style::default()
                             .fg(theme.highlight)
                             .add_modifier(Modifier::BOLD),
                     ));
+                } else {
+                    spans.push(Span::raw(" ".repeat(9)));
                 }
                 let line = Line::from(spans);
                 ListItem::new(line).style(theme.panel_style())
@@ -1426,6 +1433,12 @@ fn format_recup_days(count: u32) -> String {
     } else {
         format!("{count} days")
     }
+}
+
+fn recup_progress_ratio_text(progress: Option<&RecupProgress>) -> String {
+    progress
+        .map(|progress| format!("{}/{}", progress.reached_days, progress.threshold_days))
+        .unwrap_or_default()
 }
 
 fn rollup_list_delta_hours(
