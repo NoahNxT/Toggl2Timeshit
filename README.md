@@ -21,7 +21,7 @@ Timeshit is a Rust-based Terminal UI (TUI) that turns Toggl Track time entries i
 ### macOS
 **Homebrew (recommended)**
 ```bash
-brew tap NoahNxT/nxt-solutions-packages
+brew tap NxT-Solutions/nxt-solutions-packages
 brew install timeshit
 ```
 Upgrade:
