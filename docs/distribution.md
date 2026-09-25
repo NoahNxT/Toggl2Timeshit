@@ -5,12 +5,12 @@ Timeshit publishes official release assets on GitHub Releases and can optionally
 ## Homebrew (macOS/Linux)
 Homebrew repo:
 ```
-https://github.com/NoahNxT/homebrew-nxt-solutions-packages
+https://github.com/NxT-Solutions/homebrew-nxt-solutions-packages
 ```
 
 Install:
 ```bash
-brew tap NoahNxT/nxt-solutions-packages
+brew tap NxT-Solutions/nxt-solutions-packages
 brew install timeshit
 ```
 Upgrade:
@@ -120,7 +120,7 @@ Other managers can be added once credentials/accounts are available.
 
 ### Homebrew + Scoop automation setup
 1. Create a PAT with **repo** access to:
-   - `NoahNxT/homebrew-nxt-solutions-packages`
+   - `NxT-Solutions/homebrew-nxt-solutions-packages`
    - `NoahNxT/scoop-nxt-solutions-packages`
 2. Add it as a secret in this repo: `PACKAGES_REPO_TOKEN`.
 3. Run a release (`🔖 Release TUI`) or trigger:
